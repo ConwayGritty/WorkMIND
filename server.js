@@ -1,5 +1,5 @@
 import express from "express";
-const app=express(); app.use(express.json({limit:"40mb"})); app.use(express.static("public"));
+const app=express(); app.use(express.json({limit:"40mb"})); app.use(express.static("."));
 const PORT=process.env.PORT||3000, KEY=process.env.OPENROUTER_API_KEY;
 const CHAT=process.env.WORKMIND_MODEL||"openai/gpt-oss-20b";
 const STT=process.env.WORKMIND_TRANSCRIBE_MODEL||"openai/whisper-large-v3";

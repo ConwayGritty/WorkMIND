@@ -1,0 +1,11 @@
+{
+  "server_js_exists": true,
+  "frontend_exists": true,
+  "openrouter_key_not_frontend": true,
+  "health_route": true,
+  "self_test_route": true,
+  "transcription_endpoint": true,
+  "structured_outputs": true,
+  "media_recorder": true,
+  "server_js_syntax": true
+}

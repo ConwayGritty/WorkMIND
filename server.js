@@ -3,11 +3,66 @@ const app=express(); app.use(express.json({limit:"40mb"})); app.use(express.stat
 const PORT=process.env.PORT||3000, KEY=process.env.OPENROUTER_API_KEY;
 const CHAT=process.env.WORKMIND_MODEL||"openai/gpt-oss-20b";
 const STT=process.env.WORKMIND_TRANSCRIBE_MODEL||"openai/whisper-large-v3";
-async function post(path,body){
- if(!KEY) throw new Error("OPENROUTER_API_KEY is not configured");
- const r=await fetch("https://openrouter.ai/api/v1"+path,{method:"POST",headers:{Authorization:`Bearer ${KEY}`,"Content-Type":"application/json","X-OpenRouter-Title":"WorkMind"},body:JSON.stringify(body)});
- const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j={raw:t}}
- if(!r.ok) throw new Error(j?.error?.message||j?.message||`OpenRouter HTTP ${r.status}`); return j;
+async function post(path, body) {
+
+  if (!KEY) throw new Error("OPENROUTER_API_KEY is not configured");
+
+  const r = await fetch("https://openrouter.ai/api/v1" + path, {
+
+    method: "POST",
+
+    headers: {
+
+      Authorization: `Bearer ${KEY}`,
+
+      "Content-Type": "application/json",
+
+      "X-OpenRouter-Title": "WorkMind"
+
+    },
+
+    body: JSON.stringify(body)
+
+  });
+
+  const t = await r.text();
+
+  let j;
+
+  try {
+
+    j = JSON.parse(t);
+
+  } catch {
+
+    j = { raw: t };
+
+  }
+
+  if (!r.ok) {
+
+    console.error("OPENROUTER ERROR");
+
+    console.error("Path:", path);
+
+    console.error("Status:", r.status);
+
+    console.error("Response:", t);
+
+    throw new Error(
+
+      j?.error?.message ||
+
+      j?.message ||
+
+      `OpenRouter HTTP ${r.status}`
+
+    );
+
+  }
+
+  return j;
+
 }
 const schema={type:"object",properties:{tasks:{type:"array",items:{type:"object",properties:{
  title:{type:"string"},due:{type:["string","null"]},person:{type:["string","null"]},reason:{type:"string"},confidence:{type:"number",minimum:0,maximum:1}

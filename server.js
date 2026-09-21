@@ -72,7 +72,49 @@ async function extract(transcript,context="",existingTasks=[]){
  const j=await post("/chat/completions",{model:CHAT,messages:[{role:"system",content:system},{role:"user",content:`PRIOR CONTEXT:\n${context||"(none)"}\n\nEXISTING TASKS:\n${JSON.stringify(existingTasks)}\n\nNEW TRANSCRIPT:\n${transcript}`}],response_format:{type:"json_schema",json_schema:{name:"workmind_tasks",strict:true,schema}}});
  const c=j?.choices?.[0]?.message?.content; if(!c) throw new Error("No structured model response"); return typeof c==="string"?JSON.parse(c):c;
 }
-app.get("/api/health",(q,s)=>s.json({ok:true,version:"5.0.0",provider:"OpenRouter",apiKeyConfigured:Boolean(KEY),chatModel:CHAT,transcriptionModel:STT}));
+app.post("/api/transcribe", async (q, s) => {
+
+  try {
+
+    const { audioBase64, format = "webm" } = q.body || {};
+
+    if (!audioBase64) {
+
+      return s.status(400).json({ error: "audioBase64 required" });
+
+    }
+
+    const j = await post("/audio/transcriptions", {
+
+      model: STT,
+
+      input_audio: {
+
+        data: audioBase64,
+
+        format: format
+
+      }
+
+    });
+
+    s.json({
+
+      text: j.text || "",
+
+      usage: j.usage || null
+
+    });
+
+  } catch (e) {
+
+    console.error("TRANSCRIPTION FAILED:", e);
+
+    s.status(500).json({ error: e.message });
+
+  }
+
+});
 app.post("/api/transcribe",async(q,s)=>{try{const {audioBase64,format="webm"}=q.body||{}; if(!audioBase64)return s.status(400).json({error:"audioBase64 required"}); const j=await post("/audio/transcriptions",{model:STT,input_audio:{data:audioBase64,format},language:"en",response_format:"json"});s.json({text:j.text||"",usage:j.usage||null})}catch(e){s.status(500).json({error:e.message})}});
 app.post("/api/extract",async(q,s)=>{try{const {transcript="",context="",existingTasks=[]}=q.body||{};s.json(transcript.trim()?await extract(transcript,context,existingTasks):{tasks:[]})}catch(e){s.status(500).json({error:e.message})}});
 app.post("/api/ask",async(q,s)=>{try{const {question="",transcript="",tasks=[]}=q.body||{};const j=await post("/chat/completions",{model:CHAT,messages:[{role:"system",content:"Answer only from the supplied WorkMind transcript and task list. If absent, say you do not have enough recorded information."},{role:"user",content:`TRANSCRIPT:\n${transcript}\nTASKS:\n${JSON.stringify(tasks)}\nQUESTION:\n${question}`} ]});s.json({answer:j?.choices?.[0]?.message?.content||""})}catch(e){s.status(500).json({error:e.message})}});

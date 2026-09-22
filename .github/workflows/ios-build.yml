@@ -2,3 +2,12 @@ name: WorkMIND TestFlight
 
 on:
   workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - name: Verify runner
+        run: |
+          echo "WorkMIND TestFlight workflow is valid"
+          xcodebuild -version

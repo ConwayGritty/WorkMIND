@@ -1,10 +1,16 @@
 <!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 
-<title>WorkMind V5.1</title>
+<head>
+
+<meta charset="utf-8">
+
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1,viewport-fit=cover"
+>
+
+<title>WorkMind V5.2</title>
 
 <style>
 
@@ -21,11 +27,8 @@ margin:auto;
 padding:18px
 }
 
-h1{margin-bottom:6px}
-h2{margin-top:0}
-
 .card{
-background:#fff;
+background:white;
 border-radius:18px;
 padding:18px;
 margin:12px 0;
@@ -68,6 +71,13 @@ padding:5px 9px;
 font-size:12px
 }
 
+.count{
+font-size:13px;
+background:#f3f4f6;
+padding:4px 8px;
+border-radius:999px
+}
+
 .item{
 border-top:1px solid #eee;
 padding:12px 0
@@ -89,23 +99,19 @@ font-size:12px
 .good{color:#067647}
 .bad{color:#b42318}
 
-.count{
-font-size:13px;
-background:#f3f4f6;
-padding:4px 8px;
-border-radius:999px
-}
-
-.owner{
-font-weight:700
-}
-
 .empty{
 color:#6b7280;
 font-size:14px
 }
 
+.event{
+font-size:13px;
+padding:8px 0;
+border-top:1px solid #eee
+}
+
 </style>
+
 </head>
 
 <body>
@@ -114,30 +120,42 @@ font-size:14px
 
 <h1>
 WorkMind
-<span class="badge">V5.1 · Supervisor</span>
+<span class="badge">
+V5.2 · Supervisor
+</span>
 </h1>
 
 <p>
-<small>Your operational memory for the workday.</small>
+<small>
+Operational memory & task lifecycle
+</small>
 </p>
 
 <div class="card">
 
 <h2>Workday</h2>
 
-<button id="start" onclick="toggle()">
+<button
+id="start"
+onclick="toggle()"
+>
 Start Workday
 </button>
 
-<p id="status">Not recording.</p>
+<p id="status">
+Not recording.
+</p>
 
 <textarea
 id="manual"
 rows="4"
-placeholder="Example: Mike, inspect Pump 12 before lunch. I'll call maintenance about Valve 7."
+placeholder="Tell WorkMind what is happening..."
 ></textarea>
 
-<button class="secondary" onclick="manual()">
+<button
+class="secondary"
+onclick="manual()"
+>
 Analyze Text
 </button>
 
@@ -147,7 +165,10 @@ Analyze Text
 
 <h2>
 My Tasks
-<span class="count" id="myCount">0</span>
+<span
+class="count"
+id="myCount"
+>0</span>
 </h2>
 
 <div id="myTasks"></div>
@@ -158,7 +179,10 @@ My Tasks
 
 <h2>
 Team Tasks
-<span class="count" id="teamCount">0</span>
+<span
+class="count"
+id="teamCount"
+>0</span>
 </h2>
 
 <div id="teamTasks"></div>
@@ -169,7 +193,10 @@ Team Tasks
 
 <h2>
 Completed Work
-<span class="count" id="completedCount">0</span>
+<span
+class="count"
+id="completedCount"
+>0</span>
 </h2>
 
 <div id="completed"></div>
@@ -180,7 +207,10 @@ Completed Work
 
 <h2>
 Shift Notes
-<span class="count" id="noteCount">0</span>
+<span
+class="count"
+id="noteCount"
+>0</span>
 </h2>
 
 <div id="notes"></div>
@@ -193,12 +223,22 @@ Shift Notes
 
 <input
 id="q"
-placeholder="What is Mike supposed to do before lunch?"
+placeholder="What happened with Pump 12 today?"
 >
 
-<button onclick="ask()">Ask</button>
+<button onclick="ask()">
+Ask
+</button>
 
 <p id="answer"></p>
+
+</div>
+
+<div class="card">
+
+<h2>Activity History</h2>
+
+<div id="events"></div>
 
 </div>
 
@@ -214,10 +254,15 @@ placeholder="What is Mike supposed to do before lunch?"
 
 <h2>Diagnostics</h2>
 
-<div id="health">Checking…</div>
+<div id="health">
+Checking…
+</div>
 
-<button class="secondary" onclick="runTest()">
-Run V5.1 Tests
+<button
+class="secondary"
+onclick="runTest()"
+>
+Check V5.2 Engine
 </button>
 
 <pre id="test"></pre>
@@ -228,7 +273,10 @@ Run V5.1 Tests
 
 <h2>Workday Data</h2>
 
-<button class="danger" onclick="clearDay()">
+<button
+class="danger"
+onclick="clearDay()"
+>
 Clear Workday
 </button>
 
@@ -238,32 +286,54 @@ Clear Workday
 
 <script>
 
+const $ =
+x => document.getElementById(x);
+
 let rec;
 let stream;
 let on=false;
 
-let transcript=
-localStorage.wm51_transcript || "";
+let transcript =
+localStorage.wm52_transcript || "";
 
 let state;
 
 try{
-state=JSON.parse(
-localStorage.wm51_state || "{}"
+
+state =
+JSON.parse(
+localStorage.wm52_state || "{}"
 );
+
 }catch{
+
 state={};
+
 }
 
 state.myTasks ||= [];
 state.teamTasks ||= [];
 state.completedWork ||= [];
 state.notes ||= [];
+state.events ||= [];
 
-const $=x=>document.getElementById(x);
+/* ---------- UTILITIES ---------- */
+
+function id(){
+
+return (
+Date.now().toString(36) +
+Math.random()
+.toString(36)
+.slice(2,8)
+);
+
+}
 
 function esc(s){
-return String(s??"").replace(
+
+return String(s??"")
+.replace(
 /[&<>"']/g,
 m=>({
 "&":"&amp;",
@@ -273,49 +343,462 @@ m=>({
 "'":"&#39;"
 }[m])
 );
+
 }
 
-function makeId(){
-return (
-Date.now().toString(36)+
-Math.random().toString(36).slice(2,8)
-);
+function clean(v){
+
+if(
+v===null ||
+v===undefined
+)return null;
+
+let s=
+String(v).trim();
+
+if(
+!s ||
+s==='""' ||
+s==="''" ||
+s.toLowerCase()==="null" ||
+s.toLowerCase()==="none"
+){
+return null;
 }
 
-function normalize(s){
-return String(s||"")
+return s;
+
+}
+
+function norm(v){
+
+return String(v||"")
 .toLowerCase()
 .replace(/[^a-z0-9 ]/g,"")
 .replace(/\s+/g," ")
 .trim();
+
 }
 
 function save(){
-localStorage.wm51_transcript=transcript;
-localStorage.wm51_state=
+
+localStorage.wm52_transcript =
+transcript;
+
+localStorage.wm52_state =
 JSON.stringify(state);
 
 render();
+
 }
 
-function renderTask(t,index,type){
+function addEvent(
+type,
+text,
+taskId=null
+){
 
-let owner=
-type==="myTasks"
-?"Me"
-:(t.owner||"Unknown");
+state.events.unshift({
+
+id:id(),
+type,
+text,
+taskId,
+time:
+new Date()
+.toLocaleTimeString(
+[],
+{
+hour:"2-digit",
+minute:"2-digit"
+}
+)
+
+});
+
+}
+
+/* ---------- FIND TASK ---------- */
+
+function findTask(targetId){
+
+let i=
+state.myTasks
+.findIndex(
+x=>x.id===targetId
+);
+
+if(i>=0){
+
+return {
+list:state.myTasks,
+index:i,
+task:state.myTasks[i],
+category:"myTasks"
+};
+
+}
+
+i=
+state.teamTasks
+.findIndex(
+x=>x.id===targetId
+);
+
+if(i>=0){
+
+return {
+list:state.teamTasks,
+index:i,
+task:state.teamTasks[i],
+category:"teamTasks"
+};
+
+}
+
+return null;
+
+}
+
+/* ---------- APPLY AI ACTION ---------- */
+
+function applyAction(a){
+
+a.title=clean(a.title);
+a.owner=clean(a.owner);
+a.due=clean(a.due);
+a.details=clean(a.details);
+a.targetId=clean(a.targetId);
+
+switch(a.action){
+
+case "CREATE_MY_TASK":{
+
+if(!a.title)return;
+
+const duplicate=
+state.myTasks.some(
+x=>norm(x.title)===norm(a.title)
+);
+
+if(duplicate)return;
+
+const task={
+id:id(),
+title:a.title,
+owner:"Me",
+due:a.due,
+details:a.details,
+confidence:a.confidence
+};
+
+state.myTasks.push(task);
+
+addEvent(
+"CREATE",
+`Created my task: ${task.title}`,
+task.id
+);
+
+break;
+}
+
+case "CREATE_TEAM_TASK":{
+
+if(!a.title)return;
+
+const duplicate=
+state.teamTasks.some(
+x=>
+norm(x.title)===norm(a.title) &&
+norm(x.owner)===norm(a.owner)
+);
+
+if(duplicate)return;
+
+const task={
+id:id(),
+title:a.title,
+owner:a.owner,
+due:a.due,
+details:a.details,
+confidence:a.confidence
+};
+
+state.teamTasks.push(task);
+
+addEvent(
+"CREATE",
+`Assigned ${task.title}${
+task.owner
+?" to "+task.owner
+:""
+}`,
+task.id
+);
+
+break;
+}
+
+case "UPDATE_TASK":{
+
+const found=
+findTask(a.targetId);
+
+if(!found)return;
+
+const before={
+...found.task
+};
+
+if(a.title)
+found.task.title=a.title;
+
+if(a.due)
+found.task.due=a.due;
+
+if(a.details)
+found.task.details=a.details;
+
+addEvent(
+"UPDATE",
+`Updated ${found.task.title}${
+before.due!==found.task.due
+?`: due changed from ${
+before.due||"unspecified"
+} to ${
+found.task.due||"unspecified"
+}`
+:""
+}`,
+found.task.id
+);
+
+break;
+}
+
+case "REASSIGN_TASK":{
+
+const found=
+findTask(a.targetId);
+
+if(!found || !a.owner)return;
+
+const oldOwner=
+found.task.owner || "Me";
+
+const task={
+...found.task,
+owner:a.owner
+};
+
+found.list.splice(
+found.index,
+1
+);
+
+state.teamTasks.push(task);
+
+addEvent(
+"REASSIGN",
+`${task.title} reassigned from ${oldOwner} to ${a.owner}`,
+task.id
+);
+
+break;
+}
+
+case "COMPLETE_TASK":{
+
+const found=
+findTask(a.targetId);
+
+if(!found)return;
+
+const task=
+found.task;
+
+found.list.splice(
+found.index,
+1
+);
+
+state.completedWork.unshift({
+
+id:id(),
+
+sourceTaskId:
+task.id,
+
+title:
+a.title ||
+task.title,
+
+owner:
+a.owner ||
+task.owner,
+
+details:
+a.details ||
+task.details ||
+"Completed.",
+
+time:
+new Date()
+.toLocaleTimeString(
+[],
+{
+hour:"2-digit",
+minute:"2-digit"
+}
+)
+
+});
+
+addEvent(
+"COMPLETE",
+`${task.title} completed${
+task.owner
+?" by "+task.owner
+:""
+}`,
+task.id
+);
+
+break;
+}
+
+case "CANCEL_TASK":{
+
+const found=
+findTask(a.targetId);
+
+if(!found)return;
+
+const task=
+found.task;
+
+found.list.splice(
+found.index,
+1
+);
+
+addEvent(
+"CANCEL",
+`${task.title} cancelled`,
+task.id
+);
+
+break;
+}
+
+case "ADD_COMPLETED_WORK":{
+
+if(!a.title)return;
+
+const duplicate=
+state.completedWork.some(
+x=>
+norm(x.title)===
+norm(a.title)
+);
+
+if(duplicate)return;
+
+state.completedWork.unshift({
+
+id:id(),
+sourceTaskId:null,
+title:a.title,
+owner:a.owner,
+details:a.details,
+time:
+new Date()
+.toLocaleTimeString(
+[],
+{
+hour:"2-digit",
+minute:"2-digit"
+}
+)
+
+});
+
+addEvent(
+"COMPLETE",
+a.title
+);
+
+break;
+}
+
+case "ADD_NOTE":{
+
+if(!a.title)return;
+
+const duplicate=
+state.notes.some(
+x=>norm(x.title)===norm(a.title)
+);
+
+if(duplicate)return;
+
+state.notes.unshift({
+
+id:id(),
+title:a.title,
+details:a.details,
+time:
+new Date()
+.toLocaleTimeString(
+[],
+{
+hour:"2-digit",
+minute:"2-digit"
+}
+)
+
+});
+
+addEvent(
+"NOTE",
+a.title
+);
+
+break;
+}
+
+}
+
+}
+
+/* ---------- RENDER ---------- */
+
+function taskHTML(
+task,
+index,
+category
+){
 
 return `
+
 <div class="item">
 
 <label>
 
 <input
 type="checkbox"
-onchange="completeTask('${type}',${index},this.checked)"
+onchange="
+manualComplete(
+'${category}',
+${index}
+)
+"
 >
 
-<b>${esc(t.title)}</b>
+<b>
+${esc(task.title)}
+</b>
 
 </label>
 
@@ -323,32 +806,31 @@ onchange="completeTask('${type}',${index},this.checked)"
 
 <small>
 
-<span class="owner">
-${esc(owner)}
-</span>
+${category==="myTasks"
+?"Me"
+:esc(task.owner||"Unassigned")}
 
-${t.due
-?" · Due: "+esc(t.due)
+${task.due
+?" · Due: "+esc(task.due)
 :""}
 
-${t.confidence
-?" · "+Math.round(t.confidence*100)+"%"
-:""}
-
-${t.reason
-?" · "+esc(t.reason)
+${task.details
+?" · "+esc(task.details)
 :""}
 
 </small>
 
 </div>
+
 `;
+
 }
 
 function render(){
 
 $("transcript").textContent=
-transcript || "No transcript yet.";
+transcript ||
+"No transcript yet.";
 
 $("myCount").textContent=
 state.myTasks.length;
@@ -365,228 +847,264 @@ state.notes.length;
 $("myTasks").innerHTML=
 state.myTasks.length
 ?state.myTasks
-.map((t,i)=>renderTask(t,i,"myTasks"))
+.map(
+(t,i)=>
+taskHTML(
+t,
+i,
+"myTasks"
+)
+)
 .join("")
 :'<div class="empty">No outstanding personal tasks.</div>';
 
 $("teamTasks").innerHTML=
 state.teamTasks.length
 ?state.teamTasks
-.map((t,i)=>renderTask(t,i,"teamTasks"))
+.map(
+(t,i)=>
+taskHTML(
+t,
+i,
+"teamTasks"
+)
+)
 .join("")
 :'<div class="empty">No outstanding team tasks.</div>';
 
 $("completed").innerHTML=
 state.completedWork.length
-?state.completedWork.map(t=>`
+?state.completedWork
+.map(
+x=>`
 
 <div class="item">
 
-<b>${esc(t.title)}</b>
+<b>${esc(x.title)}</b>
 
 <br>
 
 <small>
 
-${t.owner
-?"Completed by: "+esc(t.owner)+" · "
+${x.owner
+?"By: "+esc(x.owner)
 :""}
 
-${esc(t.reason||"Completed work")}
+${x.details
+?(x.owner?" · ":"")+esc(x.details)
+:""}
+
+${x.time
+?" · "+esc(x.time)
+:""}
 
 </small>
 
 </div>
 
-`).join("")
+`
+)
+.join("")
 :'<div class="empty">No completed work recorded.</div>';
 
 $("notes").innerHTML=
 state.notes.length
-?state.notes.map(n=>`
+?state.notes
+.map(
+x=>`
 
 <div class="item">
 
-<b>${esc(n.title)}</b>
+<b>
+${esc(x.title)}
+</b>
 
 <br>
 
 <small>
-${esc(n.reason||"")}
+
+${x.details
+?esc(x.details)
+:""}
+
+${x.time
+?(x.details?" · ":"")+esc(x.time)
+:""}
+
 </small>
 
 </div>
 
-`).join("")
+`
+)
+.join("")
 :'<div class="empty">No shift notes yet.</div>';
+
+$("events").innerHTML=
+state.events.length
+?state.events
+.slice(0,50)
+.map(
+e=>`
+
+<div class="event">
+
+<b>${esc(e.time)}</b>
+·
+${esc(e.text)}
+
+</div>
+
+`
+)
+.join("")
+:'<div class="empty">No activity yet.</div>';
+
 }
 
-function completeTask(type,index,checked){
+/* ---------- MANUAL COMPLETION ---------- */
 
-if(!checked)return;
+function manualComplete(
+category,
+index
+){
 
-const task=state[type][index];
+const list=
+state[category];
 
-state[type].splice(index,1);
+const task=
+list[index];
+
+if(!task)return;
+
+list.splice(index,1);
 
 state.completedWork.unshift({
-id:task.id,
-title:task.title,
+
+id:id(),
+
+sourceTaskId:
+task.id,
+
+title:
+task.title,
+
 owner:
-type==="myTasks"
+category==="myTasks"
 ?"Me"
 :task.owner,
-due:null,
-reason:"Marked complete manually.",
-confidence:1,
-matchedTaskId:task.id
+
+details:
+"Marked complete manually.",
+
+time:
+new Date()
+.toLocaleTimeString(
+[],
+{
+hour:"2-digit",
+minute:"2-digit"
+}
+)
+
 });
 
-save();
-}
-
-function mergeUnique(target,newItems){
-
-for(const item of newItems||[]){
-
-if(!item.id){
-item.id=makeId();
-}
-
-const title=normalize(item.title);
-
-const duplicate=target.some(
-x=>normalize(x.title)===title
+addEvent(
+"COMPLETE",
+`${task.title} marked complete`,
+task.id
 );
-
-if(!duplicate){
-target.push(item);
-}
-}
-}
-
-function applyAI(result){
-
-/* Handle AI-reported completions first */
-
-for(const completed of result.completedWork||[]){
-
-if(!completed.id){
-completed.id=makeId();
-}
-
-if(completed.matchedTaskId){
-
-state.myTasks=
-state.myTasks.filter(
-t=>t.id!==completed.matchedTaskId
-);
-
-state.teamTasks=
-state.teamTasks.filter(
-t=>t.id!==completed.matchedTaskId
-);
-}
-
-const duplicate=
-state.completedWork.some(
-x=>
-normalize(x.title)===
-normalize(completed.title)
-);
-
-if(!duplicate){
-state.completedWork.unshift(completed);
-}
-}
-
-/* Add new outstanding work */
-
-mergeUnique(
-state.myTasks,
-result.myTasks
-);
-
-mergeUnique(
-state.teamTasks,
-result.teamTasks
-);
-
-/* Add notes */
-
-for(const note of result.notes||[]){
-
-const duplicate=
-state.notes.some(
-x=>
-normalize(x.title)===
-normalize(note.title)
-);
-
-if(!duplicate){
-state.notes.unshift(note);
-}
-}
 
 save();
+
 }
 
-async function health(){
+/* ---------- ANALYSIS ---------- */
+
+async function analyze(text){
+
+const context=
+transcript.slice(-10000);
+
+transcript +=
+(transcript?"\n":"") +
+text;
+
+save();
+
+$("status").textContent=
+"Analyzing work…";
 
 try{
 
-const j=
-await(
-await fetch("/api/health")
-).json();
-
-$("health").innerHTML=
-`<span class="good">
-Server online · V${esc(j.version)}
-</span>
-<br>
-<small>
-${esc(j.mode||"")}
-<br>
-AI key:
-${j.apiKeyConfigured
-?"configured"
-:"MISSING"}
-<br>
-${esc(j.chatModel)}
-<br>
-${esc(j.transcriptionModel)}
-</small>`;
-
-}catch{
-
-$("health").innerHTML=
-'<span class="bad">Server unreachable</span>';
-
+const response=
+await fetch(
+"/api/extract",
+{
+method:"POST",
+headers:{
+"Content-Type":
+"application/json"
+},
+body:
+JSON.stringify({
+transcript:text,
+context,
+state
+})
 }
-}
-
-async function runTest(){
-
-$("test").textContent=
-"Running supervisor AI tests…";
-
-try{
+);
 
 const result=
-await(
-await fetch("/api/self-test")
-).json();
+await response.json();
 
-$("test").textContent=
-JSON.stringify(result,null,2);
+if(!response.ok){
+throw Error(result.error);
+}
+
+for(
+const action of
+result.actions||[]
+){
+
+applyAction(action);
+
+}
+
+save();
+
+$("status").textContent=
+on
+?"Listening — processing about every 30 seconds."
+:"Analysis complete.";
 
 }catch(e){
 
-$("test").textContent=e.message;
+$("status").textContent=
+"AI error: "+e.message;
 
 }
+
 }
+
+/* ---------- MANUAL TEXT ---------- */
+
+async function manual(){
+
+const text=
+$("manual")
+.value
+.trim();
+
+if(!text)return;
+
+$("manual").value="";
+
+await analyze(text);
+
+}
+
+/* ---------- AUDIO ---------- */
 
 async function toggle(){
 
@@ -596,7 +1114,9 @@ rec.stop();
 
 stream
 .getTracks()
-.forEach(t=>t.stop());
+.forEach(
+t=>t.stop()
+);
 
 on=false;
 
@@ -607,18 +1127,21 @@ $("status").textContent=
 "Finishing last audio…";
 
 return;
+
 }
 
 try{
 
 stream=
-await navigator.mediaDevices
+await navigator
+.mediaDevices
 .getUserMedia({
 audio:true
 });
 
 const mime=
-MediaRecorder.isTypeSupported(
+MediaRecorder
+.isTypeSupported(
 "audio/webm;codecs=opus"
 )
 ?"audio/webm;codecs=opus"
@@ -627,10 +1150,13 @@ MediaRecorder.isTypeSupported(
 rec=
 new MediaRecorder(
 stream,
-{mimeType:mime}
+{
+mimeType:mime
+}
 );
 
-rec.ondataavailable=e=>{
+rec.ondataavailable=
+e=>{
 
 if(e.data.size>1000){
 audio(e.data);
@@ -658,9 +1184,11 @@ $("status").textContent=
 }catch(e){
 
 $("status").textContent=
-"Microphone error: "+e.message;
+"Microphone error: "+
+e.message;
 
 }
+
 }
 
 async function audio(blob){
@@ -670,15 +1198,16 @@ $("status").textContent=
 
 try{
 
-const buffer=
+const bytes=
 new Uint8Array(
 await blob.arrayBuffer()
 );
 
 let binary="";
 
-for(const byte of buffer){
-binary+=String.fromCharCode(byte);
+for(const b of bytes){
+binary+=
+String.fromCharCode(b);
 }
 
 const response=
@@ -687,10 +1216,13 @@ await fetch(
 {
 method:"POST",
 headers:{
-"Content-Type":"application/json"
+"Content-Type":
+"application/json"
 },
-body:JSON.stringify({
-audioBase64:btoa(binary),
+body:
+JSON.stringify({
+audioBase64:
+btoa(binary),
 format:"webm"
 })
 }
@@ -704,9 +1236,11 @@ throw Error(result.error);
 }
 
 if(result.text?.trim()){
+
 await analyze(
 result.text.trim()
 );
+
 }
 
 $("status").textContent=
@@ -717,80 +1251,21 @@ on
 }catch(e){
 
 $("status").textContent=
-"AI error: "+e.message;
+"AI error: "+
+e.message;
 
 }
-}
-
-async function manual(){
-
-const text=
-$("manual").value.trim();
-
-if(!text)return;
-
-$("manual").value="";
-
-await analyze(text);
-}
-
-async function analyze(text){
-
-const context=
-transcript.slice(-8000);
-
-transcript+=
-(transcript?"\n":"")+text;
-
-save();
-
-$("status").textContent=
-"Analyzing work…";
-
-try{
-
-const response=
-await fetch(
-"/api/extract",
-{
-method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-transcript:text,
-context,
-existingState:state
-})
-}
-);
-
-const result=
-await response.json();
-
-if(!response.ok){
-throw Error(result.error);
-}
-
-applyAI(result);
-
-$("status").textContent=
-on
-?"Listening — processing about every 30 seconds."
-:"Analysis complete.";
-
-}catch(e){
-
-$("status").textContent=
-"AI error: "+e.message;
 
 }
-}
+
+/* ---------- ASK ---------- */
 
 async function ask(){
 
 const question=
-$("q").value.trim();
+$("q")
+.value
+.trim();
 
 if(!question)return;
 
@@ -805,9 +1280,11 @@ await fetch(
 {
 method:"POST",
 headers:{
-"Content-Type":"application/json"
+"Content-Type":
+"application/json"
 },
-body:JSON.stringify({
+body:
+JSON.stringify({
 question,
 transcript,
 state
@@ -819,8 +1296,8 @@ const result=
 await response.json();
 
 $("answer").textContent=
-result.answer||
-result.error||
+result.answer ||
+result.error ||
 "No answer.";
 
 }catch(e){
@@ -829,15 +1306,91 @@ $("answer").textContent=
 e.message;
 
 }
+
 }
+
+/* ---------- HEALTH ---------- */
+
+async function health(){
+
+try{
+
+const j=
+await(
+await fetch(
+"/api/health"
+)
+).json();
+
+$("health").innerHTML=
+
+`<span class="good">
+Server online · V${esc(j.version)}
+</span>
+
+<br>
+
+<small>
+${esc(j.mode||"")}
+<br>
+AI key:
+${j.apiKeyConfigured
+?"configured"
+:"MISSING"}
+<br>
+${esc(j.chatModel)}
+<br>
+${esc(j.transcriptionModel)}
+</small>`;
+
+}catch{
+
+$("health").innerHTML=
+'<span class="bad">Server unreachable</span>';
+
+}
+
+}
+
+async function runTest(){
+
+$("test").textContent=
+"Checking…";
+
+try{
+
+const j=
+await(
+await fetch(
+"/api/self-test"
+)
+).json();
+
+$("test").textContent=
+JSON.stringify(
+j,
+null,
+2
+);
+
+}catch(e){
+
+$("test").textContent=
+e.message;
+
+}
+
+}
+
+/* ---------- CLEAR ---------- */
 
 function clearDay(){
 
-if(!confirm(
+if(
+!confirm(
 "Clear the entire WorkMind workday?"
-)){
-return;
-}
+)
+)return;
 
 transcript="";
 
@@ -845,14 +1398,18 @@ state={
 myTasks:[],
 teamTasks:[],
 completedWork:[],
-notes:[]
+notes:[],
+events:[]
 };
 
 save();
 
 $("status").textContent=
 "Workday cleared.";
+
 }
+
+/* ---------- START ---------- */
 
 health();
 render();

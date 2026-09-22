@@ -1,0 +1,4 @@
+name: WorkMIND TestFlight
+
+on:
+  workflow_dispatch:

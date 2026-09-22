@@ -1,0 +1,46 @@
+name: WorkMIND iOS Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iOS
+    paths:
+      - "WorkMIND/**"
+      - "project.yml"
+      - ".github/workflows/ios-build.yml"
+
+jobs:
+  simulator-build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build WorkMIND
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project WorkMIND.xcodeproj \
+            -scheme WorkMIND \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee xcodebuild.log
+
+      - name: Save build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkMIND-xcodebuild-log
+          path: xcodebuild.log

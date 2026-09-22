@@ -12,18 +12,19 @@ const PORT = process.env.PORT || 3000;
 const KEY = process.env.OPENROUTER_API_KEY;
 const CHAT = process.env.WORKMIND_MODEL || "openai/gpt-oss-20b";
 const STT =
-  process.env.WORKMIND_TRANSCRIBE_MODEL || "openai/whisper-large-v3";
-
-/* ---------------- FRONTEND ---------------- */
+  process.env.WORKMIND_TRANSCRIBE_MODEL ||
+  "openai/whisper-large-v3";
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-/* ---------------- OPENROUTER ---------------- */
+/* ---------- OPENROUTER ---------- */
 
 async function post(apiPath, body) {
-  if (!KEY) throw new Error("OPENROUTER_API_KEY is not configured");
+  if (!KEY) {
+    throw new Error("OPENROUTER_API_KEY is not configured");
+  }
 
   const response = await fetch(
     "https://openrouter.ai/api/v1" + apiPath,
@@ -41,6 +42,7 @@ async function post(apiPath, body) {
   const text = await response.text();
 
   let json;
+
   try {
     json = JSON.parse(text);
   } catch {
@@ -49,9 +51,7 @@ async function post(apiPath, body) {
 
   if (!response.ok) {
     console.error("OPENROUTER ERROR");
-    console.error("Path:", apiPath);
-    console.error("Status:", response.status);
-    console.error("Response:", text);
+    console.error(text);
 
     throw new Error(
       json?.error?.message ||
@@ -63,125 +63,125 @@ async function post(apiPath, body) {
   return json;
 }
 
-/* ---------------- SCHEMA ---------------- */
+/* ---------- NORMALIZATION ---------- */
 
-const itemProperties = {
-  id: { type: ["string", "null"] },
-  title: { type: "string" },
-  owner: { type: ["string", "null"] },
-  due: { type: ["string", "null"] },
-  reason: { type: "string" },
-  confidence: {
-    type: "number",
-    minimum: 0,
-    maximum: 1
+function clean(value) {
+  if (value === null || value === undefined) return null;
+
+  let s = String(value).trim();
+
+  if (
+    !s ||
+    s === '""' ||
+    s === "''" ||
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "none" ||
+    s.toLowerCase() === "n/a"
+  ) {
+    return null;
   }
-};
 
-const schema = {
+  return s;
+}
+
+function cleanAction(a) {
+  return {
+    action: clean(a.action),
+    targetId: clean(a.targetId),
+    title: clean(a.title),
+    owner: clean(a.owner),
+    due: clean(a.due),
+    details: clean(a.details),
+    confidence:
+      typeof a.confidence === "number"
+        ? a.confidence
+        : 0
+  };
+}
+
+/* ---------- SCHEMA ---------- */
+
+const actionSchema = {
   type: "object",
+
   properties: {
-    myTasks: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: itemProperties,
-        required: [
-          "id",
-          "title",
-          "owner",
-          "due",
-          "reason",
-          "confidence"
-        ],
-        additionalProperties: false
-      }
+    action: {
+      type: "string",
+      enum: [
+        "CREATE_MY_TASK",
+        "CREATE_TEAM_TASK",
+        "UPDATE_TASK",
+        "REASSIGN_TASK",
+        "COMPLETE_TASK",
+        "CANCEL_TASK",
+        "ADD_COMPLETED_WORK",
+        "ADD_NOTE"
+      ]
     },
 
-    teamTasks: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: itemProperties,
-        required: [
-          "id",
-          "title",
-          "owner",
-          "due",
-          "reason",
-          "confidence"
-        ],
-        additionalProperties: false
-      }
+    targetId: {
+      type: ["string", "null"]
     },
 
-    completedWork: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          ...itemProperties,
-          matchedTaskId: {
-            type: ["string", "null"]
-          }
-        },
-        required: [
-          "id",
-          "title",
-          "owner",
-          "due",
-          "reason",
-          "confidence",
-          "matchedTaskId"
-        ],
-        additionalProperties: false
-      }
+    title: {
+      type: ["string", "null"]
     },
 
-    notes: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          reason: { type: "string" },
-          confidence: {
-            type: "number",
-            minimum: 0,
-            maximum: 1
-          }
-        },
-        required: [
-          "title",
-          "reason",
-          "confidence"
-        ],
-        additionalProperties: false
-      }
+    owner: {
+      type: ["string", "null"]
+    },
+
+    due: {
+      type: ["string", "null"]
+    },
+
+    details: {
+      type: ["string", "null"]
+    },
+
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1
     }
   },
 
   required: [
-    "myTasks",
-    "teamTasks",
-    "completedWork",
-    "notes"
+    "action",
+    "targetId",
+    "title",
+    "owner",
+    "due",
+    "details",
+    "confidence"
   ],
 
   additionalProperties: false
 };
 
-/* ---------------- JSON PARSER ---------------- */
+const schema = {
+  type: "object",
+
+  properties: {
+    actions: {
+      type: "array",
+      items: actionSchema
+    }
+  },
+
+  required: ["actions"],
+  additionalProperties: false
+};
+
+/* ---------- JSON PARSER ---------- */
 
 function parseModelJSON(content) {
-  if (typeof content !== "string") return content;
+  if (typeof content !== "string") {
+    return content;
+  }
 
-  let cleaned = content.trim();
-
-  console.log("WORKMIND RAW EXTRACTION RESPONSE:");
-  console.log(cleaned);
-
-  cleaned = cleaned
+  let cleaned = content
+    .trim()
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
@@ -196,186 +196,277 @@ function parseModelJSON(content) {
 
   if (start !== -1 && end > start) {
     try {
-      return JSON.parse(cleaned.slice(start, end + 1));
+      return JSON.parse(
+        cleaned.slice(start, end + 1)
+      );
     } catch {}
   }
+
+  console.error("INVALID AI JSON:");
+  console.error(content);
 
   throw new Error("AI returned invalid WorkMind data");
 }
 
-/* ---------------- EXTRACTION ---------------- */
+/* ---------- WORKMIND BRAIN ---------- */
 
-async function extract(
+async function analyzeWork(
   transcript,
   context = "",
-  existingState = {}
+  state = {}
 ) {
   const system = `
-You are WorkMind, an operational memory assistant for a workplace supervisor.
+You are WorkMind V5.2.
+
+You are an operational memory assistant for a workplace supervisor.
 
 The USER is the supervisor.
 
-Analyze workplace conversation and maintain an accurate operational log.
+You do NOT return a rebuilt task list.
 
-Classify information into exactly four categories:
+Instead, return ACTIONS that should be applied to the CURRENT WORKMIND STATE.
 
-1. myTasks
-Outstanding work personally owned by the USER/supervisor.
+AVAILABLE ACTIONS:
+
+CREATE_MY_TASK
+Create new outstanding work owned personally by the supervisor.
+
+CREATE_TEAM_TASK
+Create new outstanding work owned by another person.
+
+UPDATE_TASK
+Modify an existing task, such as changing its due time, wording, or details.
+
+REASSIGN_TASK
+Change ownership of an existing task.
+
+COMPLETE_TASK
+An existing task was actually completed.
+
+CANCEL_TASK
+An existing task was cancelled or is no longer required.
+Cancellation is NOT completion.
+
+ADD_COMPLETED_WORK
+Work was already completed but does not correspond to an existing task.
+
+ADD_NOTE
+Important operational information that is not an outstanding task and is not itself a completed action.
+
+TARGET IDs:
+
+For UPDATE_TASK, REASSIGN_TASK, COMPLETE_TASK and CANCEL_TASK:
+targetId MUST equal the ID of the matching existing task.
+
+Never invent a targetId.
+
+If you cannot confidently identify the existing task, do not target one.
+
+TASK OWNERSHIP:
+
+"I'll..." or "I need to..." generally means the supervisor owns it.
+
+"Mike will..." or "Mike, please..." generally means Mike owns it.
+
+Never assign another person's work to the supervisor merely because the supervisor discussed it.
+
+UPDATES:
+
+If an existing task says:
+
+ID abc123
+Mike
+Inspect Pump 12
+Due before lunch
+
+and the user says:
+
+"Actually Mike can do Pump 12 before end of shift."
+
+Return:
+
+UPDATE_TASK
+targetId abc123
+due "before end of shift"
+
+Do NOT create another task.
+
+REASSIGNMENT:
+
+If Mike owns an existing Valve 7 task and the user says:
+
+"Actually John will take care of Valve 7."
+
+Return REASSIGN_TASK targeting that existing task with owner "John".
+
+Do NOT create another task.
+
+COMPLETION:
+
+If the user says:
+
+"Mike finished it."
+
+and context clearly identifies an existing Mike task,
+return COMPLETE_TASK targeting that task.
+
+Include useful result information in details.
+
+CANCELLATION:
+
+"Cancel that."
+"We don't need that anymore."
+"Scratch the Pump 12 inspection."
+
+Return CANCEL_TASK targeting the existing task.
+
+Do NOT mark cancelled work completed.
+
+COMPLETED WORK:
+
+Statements describing actions that already occurred should be recorded as completed work when operationally useful.
+
+Example:
+"Maintenance has been notified about Pump 12."
+
+That is completed work.
+
+"Operations reduced Pump 12 to 70 percent."
+
+That is also completed work because an operational action occurred.
+
+NOTES:
+
+Conditions, observations and states belong in ADD_NOTE.
 
 Examples:
-"I'll call maintenance."
-"I need to inspect Pump 12."
-"I'll take care of that."
 
-2. teamTasks
-Outstanding work owned by another person.
+"Pump 12 is vibrating more than normal."
 
-Examples:
-"Mike, inspect Pump 12."
-"John is going to check the tank."
-"I asked Sarah to finish the paperwork."
+"The discharge pressure is low."
 
-Set owner to the person's name when known.
+"The unit is currently at 70 percent."
 
-3. completedWork
-Work explicitly described as already completed.
+DUPLICATES:
 
-Examples:
-"Mike finished the inspection."
-"I checked the tank already."
-"John replaced the filter this morning."
+Never create a new task when the new statement is merely:
+- repeating an existing task
+- clarifying an existing task
+- changing an existing task
+- reassigning an existing task
+- completing an existing task
+- cancelling an existing task
 
-If completed work clearly corresponds to an existing task,
-set matchedTaskId to that existing task's id.
+Use the existing task ID.
 
-4. notes
-Operational information worth remembering that is NOT an outstanding task
-and is NOT itself completed work.
+If a broad commitment is immediately clarified:
 
-Examples:
-"Pump 12 discharge pressure is low."
-"The unit tripped twice this morning."
-"Maintenance says the part arrives tomorrow."
+"I need to inspect Pump 12.
+Specifically the discharge valve before lunch."
 
-IMPORTANT RULES:
-
-- The user is a supervisor, not merely an individual task owner.
-- Track BOTH the user's work and work owned by other people.
-- Never convert another person's task into the user's task.
-- Never treat completed work as outstanding.
-- Never treat speculation as a firm task.
-- Never invent an owner.
-- Never invent a deadline.
-- Never invent equipment, names, or details.
-- Resolve references such as:
-  "I'll do that"
-  "Mike will handle it"
-  "he finished it"
-  "that's done"
-using nearby context.
-
-DEDUPLICATION:
-
-A single real-world commitment must produce only ONE task.
-
-If the conversation says:
-"I need to inspect Pump 12"
-and then clarifies
-"I need to inspect the discharge valve on Pump 12 before lunch"
-
-return ONE consolidated task such as:
+create ONE task:
 "Inspect Pump 12 discharge valve"
+due before lunch.
 
-Do not return both the broad task and its clarification.
+MULTIPLE ACTIONS:
 
-EXISTING STATE:
+A single transcript may produce multiple actions.
 
-Use existingState to avoid duplicates and understand updates.
+Example:
 
-If a new statement merely repeats an existing outstanding task,
-do not create another task.
+"Pump 12 is vibrating badly.
+Operations reduced it to 70 percent.
+Maintenance has been notified."
 
-If work is reported complete and clearly matches an existing task,
-return it in completedWork and populate matchedTaskId.
+Return:
+ADD_NOTE for the vibration.
+ADD_COMPLETED_WORK for reducing Pump 12.
+ADD_COMPLETED_WORK for notifying maintenance.
 
-Only include items with confidence >= 0.65.
+Do not invent:
+- names
+- deadlines
+- equipment
+- results
+- task ownership
+
+Only return actions with confidence >= 0.65.
 
 Keep titles concise and operational.
 
-Return only valid JSON matching the supplied schema.
+Use null instead of empty strings.
+
+Return ONLY valid JSON matching the schema.
 `;
 
-  const result = await post("/chat/completions", {
-    model: CHAT,
+  const result = await post(
+    "/chat/completions",
+    {
+      model: CHAT,
 
-    messages: [
-      {
-        role: "system",
-        content: system
-      },
-      {
-        role: "user",
-        content:
-`PRIOR CONVERSATION CONTEXT:
+      messages: [
+        {
+          role: "system",
+          content: system
+        },
+        {
+          role: "user",
+          content:
+`PRIOR TRANSCRIPT CONTEXT:
 ${context || "(none)"}
 
 CURRENT WORKMIND STATE:
-${JSON.stringify(existingState)}
+${JSON.stringify(state)}
 
 NEW TRANSCRIPT:
 ${transcript}`
-      }
-    ],
+        }
+      ],
 
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "workmind_supervisor_log",
-        strict: true,
-        schema
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "workmind_actions",
+          strict: true,
+          schema
+        }
       }
     }
-  });
+  );
 
-  const content = result?.choices?.[0]?.message?.content;
+  const content =
+    result?.choices?.[0]?.message?.content;
 
   if (!content) {
-    console.error(
-      "FULL OPENROUTER RESPONSE:",
-      JSON.stringify(result)
-    );
     throw new Error("No structured model response");
   }
 
   const parsed = parseModelJSON(content);
 
-  for (const key of [
-    "myTasks",
-    "teamTasks",
-    "completedWork",
-    "notes"
-  ]) {
-    if (!Array.isArray(parsed[key])) parsed[key] = [];
-
-    parsed[key] = parsed[key].filter(
-      x =>
-        x &&
-        typeof x.title === "string" &&
-        typeof x.confidence === "number" &&
-        x.confidence >= 0.65
+  if (!Array.isArray(parsed.actions)) {
+    throw new Error(
+      "AI response did not contain actions"
     );
   }
 
-  return parsed;
+  return {
+    actions: parsed.actions
+      .map(cleanAction)
+      .filter(
+        a =>
+          a.action &&
+          a.confidence >= 0.65
+      )
+  };
 }
 
-/* ---------------- HEALTH ---------------- */
+/* ---------- HEALTH ---------- */
 
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
-    version: "5.1.0",
-    mode: "Supervisor Operational Log",
+    version: "5.2.0",
+    mode: "Supervisor Event Engine",
     provider: "OpenRouter",
     apiKeyConfigured: Boolean(KEY),
     chatModel: CHAT,
@@ -383,7 +474,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-/* ---------------- TRANSCRIPTION ---------------- */
+/* ---------- TRANSCRIPTION ---------- */
 
 app.post("/api/transcribe", async (req, res) => {
   try {
@@ -425,29 +516,31 @@ app.post("/api/transcribe", async (req, res) => {
   }
 });
 
-/* ---------------- ANALYZE ---------------- */
+/* ---------- EXTRACTION ---------- */
 
 app.post("/api/extract", async (req, res) => {
   try {
     const {
       transcript = "",
       context = "",
-      existingState = {}
+      state = {}
     } = req.body || {};
 
     if (!transcript.trim()) {
       return res.json({
-        myTasks: [],
-        teamTasks: [],
-        completedWork: [],
-        notes: []
+        actions: []
       });
     }
 
-    const result = await extract(
+    const result = await analyzeWork(
       transcript,
       context,
-      existingState
+      state
+    );
+
+    console.log(
+      "WORKMIND ACTIONS:",
+      JSON.stringify(result)
     );
 
     res.json(result);
@@ -463,7 +556,7 @@ app.post("/api/extract", async (req, res) => {
   }
 });
 
-/* ---------------- ASK WORKMIND ---------------- */
+/* ---------- ASK ---------- */
 
 app.post("/api/ask", async (req, res) => {
   try {
@@ -477,29 +570,31 @@ app.post("/api/ask", async (req, res) => {
       "/chat/completions",
       {
         model: CHAT,
+
         messages: [
           {
             role: "system",
             content:
 `You are WorkMind, an operational memory assistant for a workplace supervisor.
 
-Answer only from the supplied transcript and WorkMind state.
+Answer strictly from the supplied WorkMind data.
 
-Clearly distinguish:
-- supervisor's tasks
-- team tasks
-- completed work
-- operational notes
+The event history is important.
 
-If the information is not recorded, say you do not have enough recorded information.`
+Use it to explain task creation, deadline changes, reassignment, completion and cancellation when relevant.
+
+Do not invent missing information.
+
+If information was never recorded, say so clearly.`
           },
+
           {
             role: "user",
             content:
 `TRANSCRIPT:
 ${transcript}
 
-WORKMIND STATE:
+CURRENT STATE AND EVENT HISTORY:
 ${JSON.stringify(state)}
 
 QUESTION:
@@ -511,7 +606,8 @@ ${question}`
 
     res.json({
       answer:
-        result?.choices?.[0]?.message?.content || ""
+        result?.choices?.[0]?.message?.content ||
+        ""
     });
   } catch (error) {
     res.status(500).json({
@@ -520,108 +616,21 @@ ${question}`
   }
 });
 
-/* ---------------- SELF TEST ---------------- */
+/* ---------- SELF TEST ---------- */
 
 app.get("/api/self-test", async (req, res) => {
-  if (!KEY) {
-    return res.status(503).json({
-      error: "OPENROUTER_API_KEY is not configured"
-    });
-  }
-
-  const tests = [
-    {
-      name: "Supervisor self-task",
-      text:
-        "I need to inspect Pump 12 before lunch.",
-      expect: "myTasks"
-    },
-    {
-      name: "Team assignment",
-      text:
-        "Mike, inspect Pump 8 before end of shift.",
-      expect: "teamTasks"
-    },
-    {
-      name: "Completed work",
-      text:
-        "John already checked the tank level this morning.",
-      expect: "completedWork"
-    },
-    {
-      name: "Operational note",
-      text:
-        "Pump 4 discharge pressure is running low.",
-      expect: "notes"
-    },
-    {
-      name: "Hypothetical",
-      text:
-        "If Pump 4 acts up again maybe we should inspect the seal.",
-      expect: "none"
-    },
-    {
-      name: "Rejected assignment",
-      text:
-        'Manager: "Can you inspect Pump 8?" Me: "No, Mike will handle it."',
-      expect: "teamTasks"
-    },
-    {
-      name: "Duplicate clarification",
-      text:
-        "I need to inspect Pump 12. Specifically I need to inspect the discharge valve on Pump 12 before lunch.",
-      expect: "singleMyTask"
-    }
-  ];
-
-  const results = [];
-  let passed = 0;
-
-  for (const test of tests) {
-    try {
-      const r = await extract(test.text);
-
-      let pass = false;
-
-      if (test.expect === "none") {
-        pass =
-          r.myTasks.length === 0 &&
-          r.teamTasks.length === 0 &&
-          r.completedWork.length === 0;
-      } else if (test.expect === "singleMyTask") {
-        pass = r.myTasks.length === 1;
-      } else {
-        pass = r[test.expect]?.length >= 1;
-      }
-
-      if (pass) passed++;
-
-      results.push({
-        name: test.name,
-        pass,
-        result: r
-      });
-    } catch (error) {
-      results.push({
-        name: test.name,
-        pass: false,
-        error: error.message
-      });
-    }
-  }
-
   res.json({
-    version: "5.1.0",
-    passed,
-    total: tests.length,
-    tests: results
+    ok: true,
+    version: "5.2.0",
+    message:
+      "V5.2 event engine online. Use the interactive benchmark in the app."
   });
 });
 
-/* ---------------- SERVER ---------------- */
+/* ---------- START ---------- */
 
 app.listen(PORT, () => {
   console.log(
-    `WorkMind V5.1 listening on ${PORT}`
+    `WorkMind V5.2 listening on ${PORT}`
   );
 });

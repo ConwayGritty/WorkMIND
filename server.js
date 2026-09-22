@@ -3,7 +3,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const app = express();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -11,43 +10,30 @@ app.use(express.json({ limit: "40mb" }));
 
 const PORT = process.env.PORT || 3000;
 const KEY = process.env.OPENROUTER_API_KEY;
-
-const CHAT =
-  process.env.WORKMIND_MODEL ||
-  "openai/gpt-oss-20b";
-
+const CHAT = process.env.WORKMIND_MODEL || "openai/gpt-oss-20b";
 const STT =
-  process.env.WORKMIND_TRANSCRIBE_MODEL ||
-  "openai/whisper-large-v3";
+  process.env.WORKMIND_TRANSCRIBE_MODEL || "openai/whisper-large-v3";
 
-/* -------------------------------------------------------
-   FRONTEND
-------------------------------------------------------- */
+/* ---------------- FRONTEND ---------------- */
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-/* -------------------------------------------------------
-   OPENROUTER REQUEST
-------------------------------------------------------- */
+/* ---------------- OPENROUTER ---------------- */
 
 async function post(apiPath, body) {
-  if (!KEY) {
-    throw new Error("OPENROUTER_API_KEY is not configured");
-  }
+  if (!KEY) throw new Error("OPENROUTER_API_KEY is not configured");
 
   const response = await fetch(
     "https://openrouter.ai/api/v1" + apiPath,
     {
       method: "POST",
-
       headers: {
         Authorization: `Bearer ${KEY}`,
         "Content-Type": "application/json",
         "X-OpenRouter-Title": "WorkMind"
       },
-
       body: JSON.stringify(body)
     }
   );
@@ -55,7 +41,6 @@ async function post(apiPath, body) {
   const text = await response.text();
 
   let json;
-
   try {
     json = JSON.parse(text);
   } catch {
@@ -78,238 +63,319 @@ async function post(apiPath, body) {
   return json;
 }
 
-/* -------------------------------------------------------
-   TASK SCHEMA
-------------------------------------------------------- */
+/* ---------------- SCHEMA ---------------- */
+
+const itemProperties = {
+  id: { type: ["string", "null"] },
+  title: { type: "string" },
+  owner: { type: ["string", "null"] },
+  due: { type: ["string", "null"] },
+  reason: { type: "string" },
+  confidence: {
+    type: "number",
+    minimum: 0,
+    maximum: 1
+  }
+};
 
 const schema = {
   type: "object",
-
   properties: {
-    tasks: {
+    myTasks: {
       type: "array",
-
       items: {
         type: "object",
+        properties: itemProperties,
+        required: [
+          "id",
+          "title",
+          "owner",
+          "due",
+          "reason",
+          "confidence"
+        ],
+        additionalProperties: false
+      }
+    },
 
+    teamTasks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: itemProperties,
+        required: [
+          "id",
+          "title",
+          "owner",
+          "due",
+          "reason",
+          "confidence"
+        ],
+        additionalProperties: false
+      }
+    },
+
+    completedWork: {
+      type: "array",
+      items: {
+        type: "object",
         properties: {
-          title: {
-            type: "string"
-          },
-
-          due: {
+          ...itemProperties,
+          matchedTaskId: {
             type: ["string", "null"]
-          },
+          }
+        },
+        required: [
+          "id",
+          "title",
+          "owner",
+          "due",
+          "reason",
+          "confidence",
+          "matchedTaskId"
+        ],
+        additionalProperties: false
+      }
+    },
 
-          person: {
-            type: ["string", "null"]
-          },
-
-          reason: {
-            type: "string"
-          },
-
+    notes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          reason: { type: "string" },
           confidence: {
             type: "number",
             minimum: 0,
             maximum: 1
           }
         },
-
         required: [
           "title",
-          "due",
-          "person",
           "reason",
           "confidence"
         ],
-
         additionalProperties: false
       }
     }
   },
 
-  required: ["tasks"],
+  required: [
+    "myTasks",
+    "teamTasks",
+    "completedWork",
+    "notes"
+  ],
+
   additionalProperties: false
 };
 
-/* -------------------------------------------------------
-   SAFE JSON PARSER
-------------------------------------------------------- */
+/* ---------------- JSON PARSER ---------------- */
 
 function parseModelJSON(content) {
-  if (typeof content !== "string") {
-    return content;
-  }
+  if (typeof content !== "string") return content;
 
   let cleaned = content.trim();
 
   console.log("WORKMIND RAW EXTRACTION RESPONSE:");
   console.log(cleaned);
 
-  // Remove Markdown code fences if the model adds them.
   cleaned = cleaned
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  // First try parsing the response directly.
   try {
     return JSON.parse(cleaned);
-  } catch {
-    // Continue to recovery below.
-  }
+  } catch {}
 
-  // If the model included text around the JSON,
-  // attempt to recover the JSON object.
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
 
-  if (start !== -1 && end !== -1 && end > start) {
-    const possibleJSON = cleaned.slice(start, end + 1);
-
+  if (start !== -1 && end > start) {
     try {
-      return JSON.parse(possibleJSON);
-    } catch (error) {
-      console.error("JSON recovery failed:", error.message);
-    }
+      return JSON.parse(cleaned.slice(start, end + 1));
+    } catch {}
   }
 
-  console.error("WORKMIND JSON PARSE FAILED");
-  console.error("Raw response:", content);
-
-  throw new Error("AI returned invalid task data");
+  throw new Error("AI returned invalid WorkMind data");
 }
 
-/* -------------------------------------------------------
-   TASK EXTRACTION
-------------------------------------------------------- */
+/* ---------------- EXTRACTION ---------------- */
 
 async function extract(
   transcript,
   context = "",
-  existingTasks = []
+  existingState = {}
 ) {
   const system = `
-You are WorkMind, a workplace commitment detector.
+You are WorkMind, an operational memory assistant for a workplace supervisor.
 
-Your job is to identify outstanding tasks that the USER personally owns.
+The USER is the supervisor.
 
-INCLUDE:
-- Work directly assigned to the user.
-- Requests the user explicitly accepts.
-- Explicit promises made by the user.
-- Explicit self-commitments made by the user.
+Analyze workplace conversation and maintain an accurate operational log.
 
-EXCLUDE:
-- Tasks assigned to other people.
-- Requests the user rejects.
-- Hypothetical tasks.
-- Suggestions.
-- Casual discussion.
-- Tasks already completed.
-- Duplicate tasks.
+Classify information into exactly four categories:
 
-Resolve phrases such as "I'll do that" using nearby conversational context.
+1. myTasks
+Outstanding work personally owned by the USER/supervisor.
 
-Never invent:
-- deadlines
-- people
-- equipment
-- task details
+Examples:
+"I'll call maintenance."
+"I need to inspect Pump 12."
+"I'll take care of that."
 
-Only return a task when confidence is at least 0.65.
+2. teamTasks
+Outstanding work owned by another person.
 
-Return valid JSON matching the provided schema.
+Examples:
+"Mike, inspect Pump 12."
+"John is going to check the tank."
+"I asked Sarah to finish the paperwork."
+
+Set owner to the person's name when known.
+
+3. completedWork
+Work explicitly described as already completed.
+
+Examples:
+"Mike finished the inspection."
+"I checked the tank already."
+"John replaced the filter this morning."
+
+If completed work clearly corresponds to an existing task,
+set matchedTaskId to that existing task's id.
+
+4. notes
+Operational information worth remembering that is NOT an outstanding task
+and is NOT itself completed work.
+
+Examples:
+"Pump 12 discharge pressure is low."
+"The unit tripped twice this morning."
+"Maintenance says the part arrives tomorrow."
+
+IMPORTANT RULES:
+
+- The user is a supervisor, not merely an individual task owner.
+- Track BOTH the user's work and work owned by other people.
+- Never convert another person's task into the user's task.
+- Never treat completed work as outstanding.
+- Never treat speculation as a firm task.
+- Never invent an owner.
+- Never invent a deadline.
+- Never invent equipment, names, or details.
+- Resolve references such as:
+  "I'll do that"
+  "Mike will handle it"
+  "he finished it"
+  "that's done"
+using nearby context.
+
+DEDUPLICATION:
+
+A single real-world commitment must produce only ONE task.
+
+If the conversation says:
+"I need to inspect Pump 12"
+and then clarifies
+"I need to inspect the discharge valve on Pump 12 before lunch"
+
+return ONE consolidated task such as:
+"Inspect Pump 12 discharge valve"
+
+Do not return both the broad task and its clarification.
+
+EXISTING STATE:
+
+Use existingState to avoid duplicates and understand updates.
+
+If a new statement merely repeats an existing outstanding task,
+do not create another task.
+
+If work is reported complete and clearly matches an existing task,
+return it in completedWork and populate matchedTaskId.
+
+Only include items with confidence >= 0.65.
+
+Keep titles concise and operational.
+
+Return only valid JSON matching the supplied schema.
 `;
 
-  const result = await post(
-    "/chat/completions",
-    {
-      model: CHAT,
+  const result = await post("/chat/completions", {
+    model: CHAT,
 
-      messages: [
-        {
-          role: "system",
-          content: system
-        },
-
-        {
-          role: "user",
-          content:
-`PRIOR CONTEXT:
+    messages: [
+      {
+        role: "system",
+        content: system
+      },
+      {
+        role: "user",
+        content:
+`PRIOR CONVERSATION CONTEXT:
 ${context || "(none)"}
 
-EXISTING TASKS:
-${JSON.stringify(existingTasks)}
+CURRENT WORKMIND STATE:
+${JSON.stringify(existingState)}
 
 NEW TRANSCRIPT:
 ${transcript}`
-        }
-      ],
+      }
+    ],
 
-      response_format: {
-        type: "json_schema",
-
-        json_schema: {
-          name: "workmind_tasks",
-          strict: true,
-          schema
-        }
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "workmind_supervisor_log",
+        strict: true,
+        schema
       }
     }
-  );
+  });
 
-  const content =
-    result?.choices?.[0]?.message?.content;
+  const content = result?.choices?.[0]?.message?.content;
 
   if (!content) {
     console.error(
       "FULL OPENROUTER RESPONSE:",
       JSON.stringify(result)
     );
-
-    throw new Error(
-      "No structured model response"
-    );
+    throw new Error("No structured model response");
   }
 
   const parsed = parseModelJSON(content);
 
-  if (!parsed || !Array.isArray(parsed.tasks)) {
-    console.error(
-      "INVALID WORKMIND TASK RESPONSE:",
-      parsed
-    );
+  for (const key of [
+    "myTasks",
+    "teamTasks",
+    "completedWork",
+    "notes"
+  ]) {
+    if (!Array.isArray(parsed[key])) parsed[key] = [];
 
-    throw new Error(
-      "AI response did not contain a valid task list"
+    parsed[key] = parsed[key].filter(
+      x =>
+        x &&
+        typeof x.title === "string" &&
+        typeof x.confidence === "number" &&
+        x.confidence >= 0.65
     );
   }
-
-  // Extra protection:
-  // never allow low-confidence tasks through.
-  parsed.tasks = parsed.tasks.filter(task => {
-    return (
-      task &&
-      typeof task.title === "string" &&
-      typeof task.confidence === "number" &&
-      task.confidence >= 0.65
-    );
-  });
 
   return parsed;
 }
 
-/* -------------------------------------------------------
-   HEALTH CHECK
-------------------------------------------------------- */
+/* ---------------- HEALTH ---------------- */
 
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
-    version: "5.0.1",
+    version: "5.1.0",
+    mode: "Supervisor Operational Log",
     provider: "OpenRouter",
     apiKeyConfigured: Boolean(KEY),
     chatModel: CHAT,
@@ -317,339 +383,245 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-/* -------------------------------------------------------
-   AUDIO TRANSCRIPTION
-------------------------------------------------------- */
+/* ---------------- TRANSCRIPTION ---------------- */
 
-app.post(
-  "/api/transcribe",
-  async (req, res) => {
-    try {
-      const {
-        audioBase64,
-        format = "webm"
-      } = req.body || {};
+app.post("/api/transcribe", async (req, res) => {
+  try {
+    const {
+      audioBase64,
+      format = "webm"
+    } = req.body || {};
 
-      if (!audioBase64) {
-        return res.status(400).json({
-          error: "audioBase64 required"
-        });
-      }
+    if (!audioBase64) {
+      return res.status(400).json({
+        error: "audioBase64 required"
+      });
+    }
 
-      console.log(
-        `Transcribing audio: format=${format}, base64Length=${audioBase64.length}`
-      );
-
-      const result = await post(
-        "/audio/transcriptions",
-        {
-          model: STT,
-
-          input_audio: {
-            data: audioBase64,
-            format
-          }
+    const result = await post(
+      "/audio/transcriptions",
+      {
+        model: STT,
+        input_audio: {
+          data: audioBase64,
+          format
         }
-      );
-
-      console.log(
-        "TRANSCRIPTION SUCCESS:",
-        result?.text || "(empty)"
-      );
-
-      res.json({
-        text: result?.text || "",
-        usage: result?.usage || null
-      });
-
-    } catch (error) {
-      console.error(
-        "TRANSCRIPTION FAILED:",
-        error.message
-      );
-
-      res.status(500).json({
-        error: error.message
-      });
-    }
-  }
-);
-
-/* -------------------------------------------------------
-   TASK EXTRACTION ENDPOINT
-------------------------------------------------------- */
-
-app.post(
-  "/api/extract",
-  async (req, res) => {
-    try {
-      const {
-        transcript = "",
-        context = "",
-        existingTasks = []
-      } = req.body || {};
-
-      if (!transcript.trim()) {
-        return res.json({
-          tasks: []
-        });
       }
+    );
 
-      console.log(
-        "EXTRACTING TASKS FROM TRANSCRIPT:"
-      );
+    res.json({
+      text: result?.text || "",
+      usage: result?.usage || null
+    });
+  } catch (error) {
+    console.error(
+      "TRANSCRIPTION FAILED:",
+      error.message
+    );
 
-      console.log(transcript);
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
 
-      const result = await extract(
-        transcript,
-        context,
-        existingTasks
-      );
+/* ---------------- ANALYZE ---------------- */
 
-      console.log(
-        "TASK EXTRACTION SUCCESS:",
-        JSON.stringify(result)
-      );
+app.post("/api/extract", async (req, res) => {
+  try {
+    const {
+      transcript = "",
+      context = "",
+      existingState = {}
+    } = req.body || {};
 
-      res.json(result);
-
-    } catch (error) {
-      console.error(
-        "TASK EXTRACTION FAILED:",
-        error.message
-      );
-
-      res.status(500).json({
-        error: error.message
+    if (!transcript.trim()) {
+      return res.json({
+        myTasks: [],
+        teamTasks: [],
+        completedWork: [],
+        notes: []
       });
     }
+
+    const result = await extract(
+      transcript,
+      context,
+      existingState
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error(
+      "EXTRACTION FAILED:",
+      error.message
+    );
+
+    res.status(500).json({
+      error: error.message
+    });
   }
-);
+});
 
-/* -------------------------------------------------------
-   ASK WORKMIND
-------------------------------------------------------- */
+/* ---------------- ASK WORKMIND ---------------- */
 
-app.post(
-  "/api/ask",
-  async (req, res) => {
-    try {
-      const {
-        question = "",
-        transcript = "",
-        tasks = []
-      } = req.body || {};
+app.post("/api/ask", async (req, res) => {
+  try {
+    const {
+      question = "",
+      transcript = "",
+      state = {}
+    } = req.body || {};
 
-      const result = await post(
-        "/chat/completions",
-        {
-          model: CHAT,
+    const result = await post(
+      "/chat/completions",
+      {
+        model: CHAT,
+        messages: [
+          {
+            role: "system",
+            content:
+`You are WorkMind, an operational memory assistant for a workplace supervisor.
 
-          messages: [
-            {
-              role: "system",
-              content:
-                "Answer only from the supplied WorkMind transcript and task list. If the answer is absent, say you do not have enough recorded information."
-            },
+Answer only from the supplied transcript and WorkMind state.
 
-            {
-              role: "user",
+Clearly distinguish:
+- supervisor's tasks
+- team tasks
+- completed work
+- operational notes
 
-              content:
+If the information is not recorded, say you do not have enough recorded information.`
+          },
+          {
+            role: "user",
+            content:
 `TRANSCRIPT:
 ${transcript}
 
-TASKS:
-${JSON.stringify(tasks)}
+WORKMIND STATE:
+${JSON.stringify(state)}
 
 QUESTION:
 ${question}`
-            }
-          ]
-        }
-      );
-
-      res.json({
-        answer:
-          result?.choices?.[0]?.message?.content ||
-          ""
-      });
-
-    } catch (error) {
-      console.error(
-        "ASK WORKMIND FAILED:",
-        error.message
-      );
-
-      res.status(500).json({
-        error: error.message
-      });
-    }
-  }
-);
-
-/* -------------------------------------------------------
-   BENCHMARK TESTS
-------------------------------------------------------- */
-
-const cases = [
-  [
-    "accepted assignment",
-    'Supervisor: "Please inspect Pump 12 before lunch." User: "Yep, I will do that."',
-    1
-  ],
-
-  [
-    "rejected request",
-    'Supervisor: "Can you inspect Pump 8?" User: "No, ask Mike."',
-    0
-  ],
-
-  [
-    "coworker owns it",
-    'Supervisor: "Mike, replace the filter before 3." User: "Sounds good."',
-    0
-  ],
-
-  [
-    "pronoun commitment",
-    'Supervisor: "We need the turnaround paperwork submitted today." User: "I will do that after lunch."',
-    1
-  ],
-
-  [
-    "hypothetical",
-    'User: "If Pump 4 acts up again, maybe we should inspect the seal."',
-    0
-  ],
-
-  [
-    "already completed",
-    'User: "I already checked the tank level this morning."',
-    0
-  ],
-
-  [
-    "self commitment",
-    'User: "I need to call maintenance about Valve 7 before end of shift."',
-    1
-  ]
-];
-
-/* -------------------------------------------------------
-   SELF TEST
-------------------------------------------------------- */
-
-app.get(
-  "/api/self-test",
-  async (req, res) => {
-    if (!KEY) {
-      return res.status(503).json({
-        apiKeyConfigured: false,
-        error:
-          "OPENROUTER_API_KEY is not configured"
-      });
-    }
-
-    try {
-      const ping = await post(
-        "/chat/completions",
-        {
-          model: CHAT,
-
-          messages: [
-            {
-              role: "user",
-              content:
-                "Reply exactly WORKMIND_OK"
-            }
-          ],
-
-          max_tokens: 20
-        }
-      );
-
-      const connectivity =
-        (
-          ping?.choices?.[0]?.message?.content ||
-          ""
-        ).includes("WORKMIND_OK");
-
-      let passed = 0;
-      const output = [];
-
-      for (const [
-        name,
-        text,
-        expected
-      ] of cases) {
-
-        try {
-          const result =
-            await extract(text);
-
-          const count =
-            result.tasks?.length || 0;
-
-          const ok = expected
-            ? count >= 1
-            : count === 0;
-
-          if (ok) {
-            passed++;
           }
+        ]
+      }
+    );
 
-          output.push({
-            name,
-            expectedTasks: expected,
-            actualTasks: count,
-            pass: ok,
-            tasks: result.tasks
-          });
+    res.json({
+      answer:
+        result?.choices?.[0]?.message?.content || ""
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
 
-        } catch (error) {
-          output.push({
-            name,
-            expectedTasks: expected,
-            pass: false,
-            error: error.message
-          });
-        }
+/* ---------------- SELF TEST ---------------- */
+
+app.get("/api/self-test", async (req, res) => {
+  if (!KEY) {
+    return res.status(503).json({
+      error: "OPENROUTER_API_KEY is not configured"
+    });
+  }
+
+  const tests = [
+    {
+      name: "Supervisor self-task",
+      text:
+        "I need to inspect Pump 12 before lunch.",
+      expect: "myTasks"
+    },
+    {
+      name: "Team assignment",
+      text:
+        "Mike, inspect Pump 8 before end of shift.",
+      expect: "teamTasks"
+    },
+    {
+      name: "Completed work",
+      text:
+        "John already checked the tank level this morning.",
+      expect: "completedWork"
+    },
+    {
+      name: "Operational note",
+      text:
+        "Pump 4 discharge pressure is running low.",
+      expect: "notes"
+    },
+    {
+      name: "Hypothetical",
+      text:
+        "If Pump 4 acts up again maybe we should inspect the seal.",
+      expect: "none"
+    },
+    {
+      name: "Rejected assignment",
+      text:
+        'Manager: "Can you inspect Pump 8?" Me: "No, Mike will handle it."',
+      expect: "teamTasks"
+    },
+    {
+      name: "Duplicate clarification",
+      text:
+        "I need to inspect Pump 12. Specifically I need to inspect the discharge valve on Pump 12 before lunch.",
+      expect: "singleMyTask"
+    }
+  ];
+
+  const results = [];
+  let passed = 0;
+
+  for (const test of tests) {
+    try {
+      const r = await extract(test.text);
+
+      let pass = false;
+
+      if (test.expect === "none") {
+        pass =
+          r.myTasks.length === 0 &&
+          r.teamTasks.length === 0 &&
+          r.completedWork.length === 0;
+      } else if (test.expect === "singleMyTask") {
+        pass = r.myTasks.length === 1;
+      } else {
+        pass = r[test.expect]?.length >= 1;
       }
 
-      res.json({
-        apiKeyConfigured: true,
+      if (pass) passed++;
 
-        modelConnectivity:
-          connectivity,
-
-        benchmark: {
-          passed,
-          total: cases.length,
-          cases: output
-        }
+      results.push({
+        name: test.name,
+        pass,
+        result: r
       });
-
     } catch (error) {
-      console.error(
-        "SELF TEST FAILED:",
-        error.message
-      );
-
-      res.status(500).json({
+      results.push({
+        name: test.name,
+        pass: false,
         error: error.message
       });
     }
   }
-);
 
-/* -------------------------------------------------------
-   START SERVER
-------------------------------------------------------- */
+  res.json({
+    version: "5.1.0",
+    passed,
+    total: tests.length,
+    tests: results
+  });
+});
+
+/* ---------------- SERVER ---------------- */
 
 app.listen(PORT, () => {
   console.log(
-    `WorkMind V5.0.1 listening on ${PORT}`
+    `WorkMind V5.1 listening on ${PORT}`
   );
 });

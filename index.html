@@ -1,23 +1,863 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>WorkMind V5</title>
-<style>body{font-family:-apple-system,sans-serif;background:#f3f4f6;color:#111827;margin:0}main{max-width:720px;margin:auto;padding:18px}.card{background:#fff;border-radius:18px;padding:18px;margin:12px 0;box-shadow:0 2px 12px #0001}button{border:0;border-radius:12px;padding:13px 16px;font-weight:700;font-size:16px;margin:4px;background:#111827;color:white}.secondary{background:#e5e7eb;color:#111827}textarea,input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #d1d5db;border-radius:12px;font-size:16px}.badge{background:#e5e7eb;border-radius:999px;padding:5px 9px;font-size:12px}.task{border-top:1px solid #eee;padding:12px 0}small{color:#6b7280}pre{white-space:pre-wrap;font-size:12px}.good{color:#067647}.bad{color:#b42318}</style></head>
-<body><main><h1>WorkMind <span class="badge">V5 · OpenRouter</span></h1>
-<div class="card"><h2>Diagnostics</h2><div id="health">Checking…</div><button onclick="runTest()">Run Full Test</button><pre id="test"></pre></div>
-<div class="card"><h2>Workday</h2><button id="start" onclick="toggle()">Start Workday</button><p id="status">Not recording.</p><textarea id="manual" rows="4" placeholder='Supervisor: "Check Pump 12." Me: "Yep, I’ll do that."'></textarea><button class="secondary" onclick="manual()">Analyze Text</button></div>
-<div class="card"><h2>Tasks</h2><div id="tasks"></div></div>
-<div class="card"><h2>Ask WorkMind</h2><input id="q" placeholder="What did I say I’d do before lunch?"><button onclick="ask()">Ask</button><p id="answer"></p></div>
-<div class="card"><h2>Transcript</h2><pre id="transcript"></pre></div></main>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+
+<title>WorkMind V5.1</title>
+
+<style>
+
+body{
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+background:#f3f4f6;
+color:#111827;
+margin:0
+}
+
+main{
+max-width:760px;
+margin:auto;
+padding:18px
+}
+
+h1{margin-bottom:6px}
+h2{margin-top:0}
+
+.card{
+background:#fff;
+border-radius:18px;
+padding:18px;
+margin:12px 0;
+box-shadow:0 2px 12px #0001
+}
+
+button{
+border:0;
+border-radius:12px;
+padding:13px 16px;
+font-weight:700;
+font-size:16px;
+margin:4px;
+background:#111827;
+color:white
+}
+
+.secondary{
+background:#e5e7eb;
+color:#111827
+}
+
+.danger{
+background:#b42318
+}
+
+textarea,input{
+width:100%;
+box-sizing:border-box;
+padding:12px;
+border:1px solid #d1d5db;
+border-radius:12px;
+font-size:16px
+}
+
+.badge{
+background:#e5e7eb;
+border-radius:999px;
+padding:5px 9px;
+font-size:12px
+}
+
+.item{
+border-top:1px solid #eee;
+padding:12px 0
+}
+
+.item:first-child{
+border-top:0
+}
+
+small{
+color:#6b7280
+}
+
+pre{
+white-space:pre-wrap;
+font-size:12px
+}
+
+.good{color:#067647}
+.bad{color:#b42318}
+
+.count{
+font-size:13px;
+background:#f3f4f6;
+padding:4px 8px;
+border-radius:999px
+}
+
+.owner{
+font-weight:700
+}
+
+.empty{
+color:#6b7280;
+font-size:14px
+}
+
+</style>
+</head>
+
+<body>
+
+<main>
+
+<h1>
+WorkMind
+<span class="badge">V5.1 · Supervisor</span>
+</h1>
+
+<p>
+<small>Your operational memory for the workday.</small>
+</p>
+
+<div class="card">
+
+<h2>Workday</h2>
+
+<button id="start" onclick="toggle()">
+Start Workday
+</button>
+
+<p id="status">Not recording.</p>
+
+<textarea
+id="manual"
+rows="4"
+placeholder="Example: Mike, inspect Pump 12 before lunch. I'll call maintenance about Valve 7."
+></textarea>
+
+<button class="secondary" onclick="manual()">
+Analyze Text
+</button>
+
+</div>
+
+<div class="card">
+
+<h2>
+My Tasks
+<span class="count" id="myCount">0</span>
+</h2>
+
+<div id="myTasks"></div>
+
+</div>
+
+<div class="card">
+
+<h2>
+Team Tasks
+<span class="count" id="teamCount">0</span>
+</h2>
+
+<div id="teamTasks"></div>
+
+</div>
+
+<div class="card">
+
+<h2>
+Completed Work
+<span class="count" id="completedCount">0</span>
+</h2>
+
+<div id="completed"></div>
+
+</div>
+
+<div class="card">
+
+<h2>
+Shift Notes
+<span class="count" id="noteCount">0</span>
+</h2>
+
+<div id="notes"></div>
+
+</div>
+
+<div class="card">
+
+<h2>Ask WorkMind</h2>
+
+<input
+id="q"
+placeholder="What is Mike supposed to do before lunch?"
+>
+
+<button onclick="ask()">Ask</button>
+
+<p id="answer"></p>
+
+</div>
+
+<div class="card">
+
+<h2>Transcript</h2>
+
+<pre id="transcript"></pre>
+
+</div>
+
+<div class="card">
+
+<h2>Diagnostics</h2>
+
+<div id="health">Checking…</div>
+
+<button class="secondary" onclick="runTest()">
+Run V5.1 Tests
+</button>
+
+<pre id="test"></pre>
+
+</div>
+
+<div class="card">
+
+<h2>Workday Data</h2>
+
+<button class="danger" onclick="clearDay()">
+Clear Workday
+</button>
+
+</div>
+
+</main>
+
 <script>
-let rec,stream,on=false,transcript=localStorage.wm_transcript||"",tasks=JSON.parse(localStorage.wm_tasks||"[]");const $=x=>document.getElementById(x);
-function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
-function save(){localStorage.wm_transcript=transcript;localStorage.wm_tasks=JSON.stringify(tasks);render()}
-function render(){$("transcript").textContent=transcript||"No transcript yet.";$("tasks").innerHTML=tasks.length?tasks.map((t,i)=>`<div class="task"><label><input type="checkbox" ${t.done?"checked":""} onchange="done(${i},this.checked)"> <b>${esc(t.title)}</b></label><br><small>${t.due?"Due: "+esc(t.due)+" · ":""}Confidence ${Math.round((t.confidence||0)*100)}% · ${esc(t.reason||"")}</small></div>`).join(""):"No tasks yet."}
-function done(i,v){tasks[i].done=v;save()}
-async function health(){try{let j=await(await fetch("/api/health")).json();$("health").innerHTML=`<span class="good">Server online</span><br><small>AI key: ${j.apiKeyConfigured?"configured":"MISSING"} · ${esc(j.chatModel)} · ${esc(j.transcriptionModel)}</small>`}catch{$("health").innerHTML='<span class="bad">Server unreachable</span>'}}
-async function runTest(){$("test").textContent="Running live AI tests…";try{$("test").textContent=JSON.stringify(await(await fetch("/api/self-test")).json(),null,2)}catch(e){$("test").textContent=e.message}}
-async function toggle(){if(on){rec.stop();stream.getTracks().forEach(t=>t.stop());on=false;$("start").textContent="Start Workday";$("status").textContent="Stopped.";return}try{stream=await navigator.mediaDevices.getUserMedia({audio:true});rec=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm"});rec.ondataavailable=e=>{if(e.data.size>1000)audio(e.data)};rec.start(30000);on=true;$("start").textContent="Stop Workday";$("status").textContent="Listening — processing about every 30 seconds."}catch(e){$("status").textContent="Microphone error: "+e.message}}
-async function audio(blob){$("status").textContent="Transcribing…";try{let b=new Uint8Array(await blob.arrayBuffer()),bin="";for(let x of b)bin+=String.fromCharCode(x);let r=await fetch("/api/transcribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({audioBase64:btoa(bin),format:"webm"})}),j=await r.json();if(!r.ok)throw Error(j.error);if(j.text?.trim())await analyze(j.text.trim());$("status").textContent=on?"Listening — processing about every 30 seconds.":"Stopped."}catch(e){$("status").textContent="AI error: "+e.message}}
-async function manual(){let t=$("manual").value.trim();if(t){await analyze(t);$("manual").value=""}}
-async function analyze(text){let context=transcript.slice(-6000);transcript+=(transcript?"\n":"")+text;save();let r=await fetch("/api/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({transcript:text,context,existingTasks:tasks.filter(x=>!x.done)})}),j=await r.json();if(!r.ok){alert(j.error);return}for(let t of j.tasks||[])if(!tasks.some(x=>x.title.toLowerCase()===t.title.toLowerCase()&&!x.done))tasks.push({...t,done:false});save()}
-async function ask(){$("answer").textContent="Thinking…";let j=await(await fetch("/api/ask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:$("q").value,transcript,tasks})})).json();$("answer").textContent=j.answer||j.error||"No answer."}
-health();render();
-</script></body></html>
+
+let rec;
+let stream;
+let on=false;
+
+let transcript=
+localStorage.wm51_transcript || "";
+
+let state;
+
+try{
+state=JSON.parse(
+localStorage.wm51_state || "{}"
+);
+}catch{
+state={};
+}
+
+state.myTasks ||= [];
+state.teamTasks ||= [];
+state.completedWork ||= [];
+state.notes ||= [];
+
+const $=x=>document.getElementById(x);
+
+function esc(s){
+return String(s??"").replace(
+/[&<>"']/g,
+m=>({
+"&":"&amp;",
+"<":"&lt;",
+">":"&gt;",
+'"':"&quot;",
+"'":"&#39;"
+}[m])
+);
+}
+
+function makeId(){
+return (
+Date.now().toString(36)+
+Math.random().toString(36).slice(2,8)
+);
+}
+
+function normalize(s){
+return String(s||"")
+.toLowerCase()
+.replace(/[^a-z0-9 ]/g,"")
+.replace(/\s+/g," ")
+.trim();
+}
+
+function save(){
+localStorage.wm51_transcript=transcript;
+localStorage.wm51_state=
+JSON.stringify(state);
+
+render();
+}
+
+function renderTask(t,index,type){
+
+let owner=
+type==="myTasks"
+?"Me"
+:(t.owner||"Unknown");
+
+return `
+<div class="item">
+
+<label>
+
+<input
+type="checkbox"
+onchange="completeTask('${type}',${index},this.checked)"
+>
+
+<b>${esc(t.title)}</b>
+
+</label>
+
+<br>
+
+<small>
+
+<span class="owner">
+${esc(owner)}
+</span>
+
+${t.due
+?" · Due: "+esc(t.due)
+:""}
+
+${t.confidence
+?" · "+Math.round(t.confidence*100)+"%"
+:""}
+
+${t.reason
+?" · "+esc(t.reason)
+:""}
+
+</small>
+
+</div>
+`;
+}
+
+function render(){
+
+$("transcript").textContent=
+transcript || "No transcript yet.";
+
+$("myCount").textContent=
+state.myTasks.length;
+
+$("teamCount").textContent=
+state.teamTasks.length;
+
+$("completedCount").textContent=
+state.completedWork.length;
+
+$("noteCount").textContent=
+state.notes.length;
+
+$("myTasks").innerHTML=
+state.myTasks.length
+?state.myTasks
+.map((t,i)=>renderTask(t,i,"myTasks"))
+.join("")
+:'<div class="empty">No outstanding personal tasks.</div>';
+
+$("teamTasks").innerHTML=
+state.teamTasks.length
+?state.teamTasks
+.map((t,i)=>renderTask(t,i,"teamTasks"))
+.join("")
+:'<div class="empty">No outstanding team tasks.</div>';
+
+$("completed").innerHTML=
+state.completedWork.length
+?state.completedWork.map(t=>`
+
+<div class="item">
+
+<b>${esc(t.title)}</b>
+
+<br>
+
+<small>
+
+${t.owner
+?"Completed by: "+esc(t.owner)+" · "
+:""}
+
+${esc(t.reason||"Completed work")}
+
+</small>
+
+</div>
+
+`).join("")
+:'<div class="empty">No completed work recorded.</div>';
+
+$("notes").innerHTML=
+state.notes.length
+?state.notes.map(n=>`
+
+<div class="item">
+
+<b>${esc(n.title)}</b>
+
+<br>
+
+<small>
+${esc(n.reason||"")}
+</small>
+
+</div>
+
+`).join("")
+:'<div class="empty">No shift notes yet.</div>';
+}
+
+function completeTask(type,index,checked){
+
+if(!checked)return;
+
+const task=state[type][index];
+
+state[type].splice(index,1);
+
+state.completedWork.unshift({
+id:task.id,
+title:task.title,
+owner:
+type==="myTasks"
+?"Me"
+:task.owner,
+due:null,
+reason:"Marked complete manually.",
+confidence:1,
+matchedTaskId:task.id
+});
+
+save();
+}
+
+function mergeUnique(target,newItems){
+
+for(const item of newItems||[]){
+
+if(!item.id){
+item.id=makeId();
+}
+
+const title=normalize(item.title);
+
+const duplicate=target.some(
+x=>normalize(x.title)===title
+);
+
+if(!duplicate){
+target.push(item);
+}
+}
+}
+
+function applyAI(result){
+
+/* Handle AI-reported completions first */
+
+for(const completed of result.completedWork||[]){
+
+if(!completed.id){
+completed.id=makeId();
+}
+
+if(completed.matchedTaskId){
+
+state.myTasks=
+state.myTasks.filter(
+t=>t.id!==completed.matchedTaskId
+);
+
+state.teamTasks=
+state.teamTasks.filter(
+t=>t.id!==completed.matchedTaskId
+);
+}
+
+const duplicate=
+state.completedWork.some(
+x=>
+normalize(x.title)===
+normalize(completed.title)
+);
+
+if(!duplicate){
+state.completedWork.unshift(completed);
+}
+}
+
+/* Add new outstanding work */
+
+mergeUnique(
+state.myTasks,
+result.myTasks
+);
+
+mergeUnique(
+state.teamTasks,
+result.teamTasks
+);
+
+/* Add notes */
+
+for(const note of result.notes||[]){
+
+const duplicate=
+state.notes.some(
+x=>
+normalize(x.title)===
+normalize(note.title)
+);
+
+if(!duplicate){
+state.notes.unshift(note);
+}
+}
+
+save();
+}
+
+async function health(){
+
+try{
+
+const j=
+await(
+await fetch("/api/health")
+).json();
+
+$("health").innerHTML=
+`<span class="good">
+Server online · V${esc(j.version)}
+</span>
+<br>
+<small>
+${esc(j.mode||"")}
+<br>
+AI key:
+${j.apiKeyConfigured
+?"configured"
+:"MISSING"}
+<br>
+${esc(j.chatModel)}
+<br>
+${esc(j.transcriptionModel)}
+</small>`;
+
+}catch{
+
+$("health").innerHTML=
+'<span class="bad">Server unreachable</span>';
+
+}
+}
+
+async function runTest(){
+
+$("test").textContent=
+"Running supervisor AI tests…";
+
+try{
+
+const result=
+await(
+await fetch("/api/self-test")
+).json();
+
+$("test").textContent=
+JSON.stringify(result,null,2);
+
+}catch(e){
+
+$("test").textContent=e.message;
+
+}
+}
+
+async function toggle(){
+
+if(on){
+
+rec.stop();
+
+stream
+.getTracks()
+.forEach(t=>t.stop());
+
+on=false;
+
+$("start").textContent=
+"Start Workday";
+
+$("status").textContent=
+"Finishing last audio…";
+
+return;
+}
+
+try{
+
+stream=
+await navigator.mediaDevices
+.getUserMedia({
+audio:true
+});
+
+const mime=
+MediaRecorder.isTypeSupported(
+"audio/webm;codecs=opus"
+)
+?"audio/webm;codecs=opus"
+:"audio/webm";
+
+rec=
+new MediaRecorder(
+stream,
+{mimeType:mime}
+);
+
+rec.ondataavailable=e=>{
+
+if(e.data.size>1000){
+audio(e.data);
+}
+
+};
+
+rec.onstop=()=>{
+
+$("status").textContent=
+"Workday stopped.";
+
+};
+
+rec.start(30000);
+
+on=true;
+
+$("start").textContent=
+"Stop Workday";
+
+$("status").textContent=
+"Listening — processing about every 30 seconds.";
+
+}catch(e){
+
+$("status").textContent=
+"Microphone error: "+e.message;
+
+}
+}
+
+async function audio(blob){
+
+$("status").textContent=
+"Transcribing…";
+
+try{
+
+const buffer=
+new Uint8Array(
+await blob.arrayBuffer()
+);
+
+let binary="";
+
+for(const byte of buffer){
+binary+=String.fromCharCode(byte);
+}
+
+const response=
+await fetch(
+"/api/transcribe",
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+audioBase64:btoa(binary),
+format:"webm"
+})
+}
+);
+
+const result=
+await response.json();
+
+if(!response.ok){
+throw Error(result.error);
+}
+
+if(result.text?.trim()){
+await analyze(
+result.text.trim()
+);
+}
+
+$("status").textContent=
+on
+?"Listening — processing about every 30 seconds."
+:"Workday stopped.";
+
+}catch(e){
+
+$("status").textContent=
+"AI error: "+e.message;
+
+}
+}
+
+async function manual(){
+
+const text=
+$("manual").value.trim();
+
+if(!text)return;
+
+$("manual").value="";
+
+await analyze(text);
+}
+
+async function analyze(text){
+
+const context=
+transcript.slice(-8000);
+
+transcript+=
+(transcript?"\n":"")+text;
+
+save();
+
+$("status").textContent=
+"Analyzing work…";
+
+try{
+
+const response=
+await fetch(
+"/api/extract",
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+transcript:text,
+context,
+existingState:state
+})
+}
+);
+
+const result=
+await response.json();
+
+if(!response.ok){
+throw Error(result.error);
+}
+
+applyAI(result);
+
+$("status").textContent=
+on
+?"Listening — processing about every 30 seconds."
+:"Analysis complete.";
+
+}catch(e){
+
+$("status").textContent=
+"AI error: "+e.message;
+
+}
+}
+
+async function ask(){
+
+const question=
+$("q").value.trim();
+
+if(!question)return;
+
+$("answer").textContent=
+"Thinking…";
+
+try{
+
+const response=
+await fetch(
+"/api/ask",
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+question,
+transcript,
+state
+})
+}
+);
+
+const result=
+await response.json();
+
+$("answer").textContent=
+result.answer||
+result.error||
+"No answer.";
+
+}catch(e){
+
+$("answer").textContent=
+e.message;
+
+}
+}
+
+function clearDay(){
+
+if(!confirm(
+"Clear the entire WorkMind workday?"
+)){
+return;
+}
+
+transcript="";
+
+state={
+myTasks:[],
+teamTasks:[],
+completedWork:[],
+notes:[]
+};
+
+save();
+
+$("status").textContent=
+"Workday cleared.";
+}
+
+health();
+render();
+
+</script>
+
+</body>
+</html>

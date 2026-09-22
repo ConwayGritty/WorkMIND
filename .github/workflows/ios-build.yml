@@ -1,22 +1,20 @@
-name: WorkMIND iOS Build
+name: WorkMIND TestFlight
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - iOS
-    paths:
-      - "WorkMIND/**"
-      - "project.yml"
-      - ".github/workflows/ios-build.yml"
 
 jobs:
-  simulator-build:
-    runs-on: macos-latest
+  build-and-upload:
+    runs-on: macos-26
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -24,23 +22,140 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Show Xcode version
-        run: xcodebuild -version
+      - name: Install signing certificate and provisioning profile
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
 
-      - name: Build WorkMIND
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" \
+            -P "$P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+
+          PROFILE_UUID=$(
+            security cms -D -i "$PP_PATH" |
+            plutil -extract UUID raw -
+          )
+
+          cp "$PP_PATH" \
+            ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
+
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+
+      - name: Create ExportOptions
+        run: |
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+
+              <key>teamID</key>
+              <string>G65ZY27TWM</string>
+
+              <key>signingStyle</key>
+              <string>manual</string>
+
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>com.conwaygritty.workmind</key>
+                  <string>WorkMIND App Store</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Archive WorkMIND
         run: |
           set -o pipefail
+
           xcodebuild \
             -project WorkMIND.xcodeproj \
             -scheme WorkMIND \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            build | tee xcodebuild.log
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/WorkMIND.xcarchive" \
+            DEVELOPMENT_TEAM=G65ZY27TWM \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="WorkMIND App Store" \
+            PRODUCT_BUNDLE_IDENTIFIER=com.conwaygritty.workmind \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            MARKETING_VERSION=1.0 \
+            archive | tee archive.log
 
-      - name: Save build log
+      - name: Export IPA
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/WorkMIND.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist ExportOptions.plist
+
+          ls -la "$RUNNER_TEMP/export"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+
+          printf '%s' "$APPSTORE_PRIVATE_KEY" \
+            > ~/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8
+
+          chmod 600 \
+            ~/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8
+
+      - name: Upload to TestFlight
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+        run: |
+          IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" -print -quit)
+
+          if [ -z "$IPA" ]; then
+            echo "No IPA was generated."
+            exit 1
+          fi
+
+          xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$IPA" \
+            --apiKey "$APPSTORE_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID"
+
+      - name: Save build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: WorkMIND-xcodebuild-log
-          path: xcodebuild.log
+          name: WorkMIND-TestFlight-logs
+          path: |
+            archive.log
+            ExportOptions.plist

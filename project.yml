@@ -21,6 +21,8 @@ targets:
       path: WorkMIND/Info.plist
       properties:
         CFBundleDisplayName: WorkMIND
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSMicrophoneUsageDescription: "WorkMIND uses the microphone to capture shift information."
         UIBackgroundModes:
           - audio

@@ -138,11 +138,9 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         let session = AVAudioSession.sharedInstance()
 
         /*
-         This is intentionally a recording-only session.
-
-         With the "audio" background mode enabled in the
-         app's Info.plist, an actively recording app can
-         continue its audio session while backgrounded.
+         Keep one recording session active while WorkMIND
+         is running. The app already declares the audio
+         background mode in its Info.plist.
         */
         try session.setCategory(
             .record,
@@ -214,13 +212,10 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         }
 
         /*
-         IMPORTANT:
+         No duration is supplied here.
 
-         record() has NO duration.
-
-         The recorder therefore remains active until
-         WorkMIND explicitly stops it or iOS interrupts
-         the audio session.
+         Recording stays active until the user presses Stop
+         or iOS interrupts the audio session.
         */
         guard newRecorder.record() else {
             throw recordingError(
@@ -249,8 +244,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             }
 
             /*
-             Ignore the normal finish caused by the user
-             pressing Stop.
+             If the user pressed Stop, the completed file
+             simply remains in the queue for processing.
             */
             guard self.shouldRun else {
                 self.refreshQueueCount()
@@ -263,10 +258,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             if flag {
 
                 /*
-                 Recording ended unexpectedly even though
-                 WorkMIND is supposed to be running.
-
-                 Restart it.
+                 WorkMIND is still supposed to be running,
+                 so restart recording if it ended unexpectedly.
                 */
                 self.recover()
 
@@ -378,10 +371,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         }
 
         /*
-         Never touch the file currently being recorded.
-
-         AVAudioRecorder needs to finalize the M4A
-         container before we upload it.
+         Never upload the M4A currently being written.
+         AVAudioRecorder must finalize it first.
         */
         if url == recorder?.url {
             return
@@ -438,9 +429,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 "Processing failed: \(error.localizedDescription)"
 
             /*
-             Keep the recording on disk.
-
-             It will be retried instead of discarded.
+             Keep the recording on disk so WorkMIND can
+             retry it rather than losing captured audio.
             */
             try? await Task.sleep(
                 for: .seconds(8)
@@ -512,7 +502,7 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                     break
                 }
             }
-        )
+        }
 
         NotificationCenter.default.addObserver(
             forName:
@@ -528,8 +518,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 }
 
                 /*
-                 Only recover if recording genuinely
-                 stopped after the route change.
+                 Recover only if a route change actually
+                 caused recording to stop.
                 */
                 if self.shouldRun &&
                     self.recorder?.isRecording != true {
@@ -537,7 +527,7 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                     self.recover()
                 }
             }
-        )
+        }
     }
 
     // MARK: - Encoding Error

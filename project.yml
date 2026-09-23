@@ -17,15 +17,21 @@ targets:
     sources:
       - path: WorkMIND
 
+    info:
+      path: WorkMIND/Info.plist
+      properties:
+        CFBundleDisplayName: WorkMIND
+        NSMicrophoneUsageDescription: "WorkMIND uses the microphone to capture shift information."
+        UIBackgroundModes:
+          - audio
+
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.conwaygritty.workmind
         PRODUCT_NAME: WorkMIND
 
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: WorkMIND
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "WorkMIND uses the microphone to capture shift information."
-        INFOPLIST_KEY_UIBackgroundModes: "audio"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WorkMIND/Info.plist
 
         TARGETED_DEVICE_FAMILY: "1"
 

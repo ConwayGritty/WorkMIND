@@ -20,12 +20,10 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
     private weak var store: WorkMindStore?
 
     private var recorder: AVAudioRecorder?
-    private var segmentTimer: Timer?
     private var worker: Task<Void, Never>?
 
     private var shouldRun = false
 
-    private let segmentSeconds: TimeInterval = 20
     private let fileManager = FileManager.default
 
     private var queueDirectory: URL {
@@ -50,7 +48,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 attributes: nil
             )
         } catch {
-            lastError = "Queue setup failed: \(error.localizedDescription)"
+            lastError =
+                "Queue setup failed: \(error.localizedDescription)"
         }
 
         refreshQueueCount()
@@ -58,11 +57,18 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         startWorker()
     }
 
+    // MARK: - Start
+
     func start() async {
+
+        guard !shouldRun else {
+            return
+        }
 
         lastError = nil
 
-        let granted = await AVAudioApplication.requestRecordPermission()
+        let granted =
+            await AVAudioApplication.requestRecordPermission()
 
         guard granted else {
             lastError = "Microphone permission denied."
@@ -74,49 +80,70 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
 
         do {
             try activateAudioSession()
-            try beginSegment()
+            try beginContinuousRecording()
 
         } catch {
             shouldRun = false
+
             recorder?.stop()
             recorder = nil
 
-            try? AVAudioSession.sharedInstance().setActive(
-                false,
-                options: .notifyOthersOnDeactivation
-            )
+            deactivateAudioSession()
 
-            lastError = "Recording start failed: \(error.localizedDescription)"
+            lastError =
+                "Recording start failed: \(error.localizedDescription)"
+
             status = .stopped
         }
     }
 
+    // MARK: - Stop
+
     func stop() {
+
+        guard shouldRun else {
+            return
+        }
 
         shouldRun = false
 
-        segmentTimer?.invalidate()
-        segmentTimer = nil
+        /*
+         Stopping finalizes the M4A file.
 
+         Once finalized, the worker can safely upload
+         and process it.
+        */
         recorder?.stop()
         recorder = nil
 
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+        deactivateAudioSession()
 
         refreshQueueCount()
 
         status = .stopped
+
+        /*
+         Give the worker an immediate opportunity
+         to process the completed recording.
+        */
+        Task { [weak self] in
+            await self?.processNext()
+        }
     }
+
+    // MARK: - Audio Session
 
     private func activateAudioSession() throws {
 
         let session = AVAudioSession.sharedInstance()
 
-        // WorkMIND only needs microphone input.
-        // Do not use spokenAudio mode with the record category.
+        /*
+         This is intentionally a recording-only session.
+
+         With the "audio" background mode enabled in the
+         app's Info.plist, an actively recording app can
+         continue its audio session while backgrounded.
+        */
         try session.setCategory(
             .record,
             mode: .default,
@@ -129,31 +156,46 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         )
     }
 
-    private func beginSegment() throws {
+    private func deactivateAudioSession() {
+
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    }
+
+    // MARK: - Continuous Recording
+
+    private func beginContinuousRecording() throws {
 
         guard shouldRun else {
             return
         }
 
         let filename =
-            "segment-\(Date().timeIntervalSince1970)-\(UUID().uuidString).m4a"
+            "recording-\(Date().timeIntervalSince1970)-\(UUID().uuidString).m4a"
 
-        let url = queueDirectory.appendingPathComponent(filename)
+        let url =
+            queueDirectory.appendingPathComponent(
+                filename
+            )
 
-        /*
-         Use a conventional AAC configuration.
-
-         44.1 kHz is deliberately used here rather than trying to force
-         the microphone hardware to operate at 16 kHz. The transcription
-         service can handle the encoded audio file independently of the
-         device's hardware sample rate.
-        */
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44_100.0,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64_000,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+
+            AVFormatIDKey:
+                Int(kAudioFormatMPEG4AAC),
+
+            AVSampleRateKey:
+                44_100.0,
+
+            AVNumberOfChannelsKey:
+                1,
+
+            AVEncoderBitRateKey:
+                64_000,
+
+            AVEncoderAudioQualityKey:
+                AVAudioQuality.high.rawValue
         ]
 
         let newRecorder = try AVAudioRecorder(
@@ -165,88 +207,108 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
         newRecorder.isMeteringEnabled = false
 
         guard newRecorder.prepareToRecord() else {
-            throw NSError(
-                domain: "WorkMIND.Recording",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "The audio recorder could not prepare to record."
-                ]
+            throw recordingError(
+                1,
+                "The recorder could not prepare."
             )
         }
 
+        /*
+         IMPORTANT:
+
+         record() has NO duration.
+
+         The recorder therefore remains active until
+         WorkMIND explicitly stops it or iOS interrupts
+         the audio session.
+        */
         guard newRecorder.record() else {
-            throw NSError(
-                domain: "WorkMIND.Recording",
-                code: 3,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "The audio recorder could not start."
-                ]
+            throw recordingError(
+                2,
+                "The recorder could not start."
             )
         }
 
         recorder = newRecorder
+
         status = .recording
         lastError = nil
+    }
 
-        segmentTimer?.invalidate()
+    // MARK: - Finished Recording
 
-        segmentTimer = Timer.scheduledTimer(
-            withTimeInterval: segmentSeconds,
-            repeats: false
-        ) { [weak self] _ in
+    nonisolated func audioRecorderDidFinishRecording(
+        _ recorder: AVAudioRecorder,
+        successfully flag: Bool
+    ) {
 
-            Task { @MainActor in
-                self?.rotateSegment()
+        Task { @MainActor [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            /*
+             Ignore the normal finish caused by the user
+             pressing Stop.
+            */
+            guard self.shouldRun else {
+                self.refreshQueueCount()
+                return
+            }
+
+            self.recorder = nil
+            self.refreshQueueCount()
+
+            if flag {
+
+                /*
+                 Recording ended unexpectedly even though
+                 WorkMIND is supposed to be running.
+
+                 Restart it.
+                */
+                self.recover()
+
+            } else {
+
+                self.recover(
+                    self.recordingError(
+                        3,
+                        "Recording ended unexpectedly."
+                    )
+                )
             }
         }
     }
 
-    private func rotateSegment() {
+    // MARK: - Recovery
 
-        guard shouldRun else {
-            return
-        }
-
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-
-        recorder?.stop()
-        recorder = nil
-
-        refreshQueueCount()
-
-        do {
-            try beginSegment()
-        } catch {
-            recover(error)
-        }
-    }
-
-    private func recover(_ error: Error? = nil) {
+    private func recover(
+        _ error: Error? = nil
+    ) {
 
         if let error {
-            lastError = "Recording interrupted: \(error.localizedDescription)"
+            lastError =
+                "Recording interrupted: \(error.localizedDescription)"
         }
-
-        status = .recovering
-        restartCount += 1
-
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-
-        recorder?.stop()
-        recorder = nil
 
         guard shouldRun else {
             status = .stopped
             return
         }
 
+        status = .recovering
+        restartCount += 1
+
+        recorder?.stop()
+        recorder = nil
+
         Task {
 
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(
+                for: .seconds(1)
+            )
 
             guard shouldRun else {
                 status = .stopped
@@ -254,15 +316,19 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             }
 
             do {
+
                 try activateAudioSession()
-                try beginSegment()
+
+                try beginContinuousRecording()
 
             } catch {
 
                 lastError =
                     "Recording recovery failed: \(error.localizedDescription)"
 
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(
+                    for: .seconds(3)
+                )
 
                 if shouldRun {
                     recover(error)
@@ -270,6 +336,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             }
         }
     }
+
+    // MARK: - Processing Worker
 
     private func startWorker() {
 
@@ -282,7 +350,7 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 await self?.processNext()
 
                 try? await Task.sleep(
-                    for: .seconds(2)
+                    for: .seconds(3)
                 )
             }
         }
@@ -299,7 +367,8 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 $0.pathExtension.lowercased() == "m4a"
             }
             .sorted {
-                $0.lastPathComponent < $1.lastPathComponent
+                $0.lastPathComponent <
+                $1.lastPathComponent
             }
 
         queuedSegments = files.count
@@ -308,29 +377,41 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             return
         }
 
-        // Never upload the file currently being recorded.
+        /*
+         Never touch the file currently being recorded.
+
+         AVAudioRecorder needs to finalize the M4A
+         container before we upload it.
+        */
         if url == recorder?.url {
             return
         }
 
         do {
 
-            let data = try Data(contentsOf: url)
+            let data =
+                try Data(contentsOf: url)
 
-            // Delete obviously empty/broken segments.
             guard data.count > 1000 else {
-                try? fileManager.removeItem(at: url)
+
+                try? fileManager.removeItem(
+                    at: url
+                )
+
                 refreshQueueCount()
+
                 return
             }
 
-            let text = try await APIClient.shared.transcribe(
-                data: data
-            )
+            let text =
+                try await APIClient.shared.transcribe(
+                    data: data
+                )
 
-            let cleanedText = text.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
+            let cleanedText =
+                text.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
 
             if !cleanedText.isEmpty {
 
@@ -341,13 +422,14 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                 lastTranscriptAt = Date()
             }
 
-            try fileManager.removeItem(at: url)
+            try fileManager.removeItem(
+                at: url
+            )
 
             processedSegments += 1
 
             refreshQueueCount()
 
-            // Clear old errors once the complete pipeline succeeds.
             lastError = nil
 
         } catch {
@@ -355,12 +437,18 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             lastError =
                 "Processing failed: \(error.localizedDescription)"
 
-            // Keep the segment so WorkMIND can retry it.
+            /*
+             Keep the recording on disk.
+
+             It will be retried instead of discarded.
+            */
             try? await Task.sleep(
                 for: .seconds(8)
             )
         }
     }
+
+    // MARK: - Queue
 
     private func refreshQueueCount() {
 
@@ -375,10 +463,13 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
             .count
     }
 
+    // MARK: - Interruptions
+
     private func observeAudioSession() {
 
         NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification,
+            forName:
+                AVAudioSession.interruptionNotification,
             object: nil,
             queue: .main
         ) { [weak self] notification in
@@ -394,6 +485,7 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                         notification.userInfo?[
                             AVAudioSessionInterruptionTypeKey
                         ] as? UInt,
+
                     let type =
                         AVAudioSession.InterruptionType(
                             rawValue: raw
@@ -420,10 +512,11 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                     break
                 }
             }
-        }
+        )
 
         NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
+            forName:
+                AVAudioSession.routeChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -434,29 +527,56 @@ final class RecordingEngine: NSObject, ObservableObject, AVAudioRecorderDelegate
                     return
                 }
 
+                /*
+                 Only recover if recording genuinely
+                 stopped after the route change.
+                */
                 if self.shouldRun &&
                     self.recorder?.isRecording != true {
 
                     self.recover()
                 }
             }
-        }
+        )
     }
 
-    func audioRecorderEncodeErrorDidOccur(
+    // MARK: - Encoding Error
+
+    nonisolated func audioRecorderEncodeErrorDidOccur(
         _ recorder: AVAudioRecorder,
         error: Error?
     ) {
 
-        recover(
-            error ?? NSError(
-                domain: "WorkMIND.Recording",
-                code: 4,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "An audio encoding error occurred."
-                ]
+        Task { @MainActor [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            self.recover(
+                error ??
+                self.recordingError(
+                    4,
+                    "An audio encoding error occurred."
+                )
             )
+        }
+    }
+
+    // MARK: - Error Helper
+
+    private func recordingError(
+        _ code: Int,
+        _ message: String
+    ) -> NSError {
+
+        NSError(
+            domain: "WorkMIND.Recording",
+            code: code,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    message
+            ]
         )
     }
 }
